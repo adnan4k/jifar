@@ -179,6 +179,7 @@ Commands (all `async`, returning `Result<T, AppError>`):
 
 | Command                | Args                                         | Returns |
 | ---------------------- | -------------------------------------------- | ------- |
+| `ping`                 | —                                            | `{version, dataDir}` (health check, M0) |
 | `devices_list`         | —                                            | `{inputs[], outputs[]}` |
 | `recording_start`      | `{title?, language, micDevice?, sinkDevice?}` | `Meeting` |
 | `recording_pause` / `recording_resume` | `{meetingId}`                 | `()` |

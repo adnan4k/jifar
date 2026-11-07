@@ -4,3 +4,5 @@ target/
 *.opus
 *.wav
 .qodo/
+src-tauri/gen/
+.claude/settings.local.json

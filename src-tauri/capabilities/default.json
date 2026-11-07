@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal capability for the main window. Jifar's own commands are allowed by default; do not add filesystem, shell, http or other plugin permissions without a spec change (SPEC §6.1, NFR-06).",
+  "windows": ["main"],
+  "permissions": ["core:event:default"]
+}
