@@ -1,0 +1,44 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/* Design tokens: docs/DESIGN.md §1. Dark theme only for V1. */
+@theme {
+  --color-bg: #0f0f14;
+  --color-panel: #16161d;
+  --color-card: #1e1e27;
+  --color-card-hover: #24242f;
+  --color-line: #2a2a35;
+  --color-fg: #ececf1;
+  --color-muted: #9a9aab;
+  --color-accent: #7c5cff;
+  --color-accent-soft: #7c5cff26;
+  --color-danger: #ef4444;
+  --color-warn: #f59e0b;
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  *,
+  ::before,
+  ::after {
+    border-color: var(--color-line);
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply overflow-hidden bg-bg font-sans text-fg antialiased;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line);
+    border-radius: 4px;
+  }
+}
