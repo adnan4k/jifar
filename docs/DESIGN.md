@@ -6,7 +6,7 @@
 | Date   | 2026-11-07 |
 | Reference | [`design/reference-ui.png`](./design/reference-ui.png) (the chosen visual direction) |
 
-The reference image is a **style and layout reference**, not a pixel spec. Its brand name ("EchoScribe"), macOS window buttons, "Real-time audio" selector and placeholder text don't apply to Jifar. This document records what we take from it and how it maps to Jifar's V1 features ([`SPEC.md`](./SPEC.md)).
+The reference image is a **style and layout reference**, not a pixel spec. Its macOS window buttons, "Real-time audio" selector and placeholder text don't apply to Jifar. This document records what we take from it and how it maps to Jifar's V1 features ([`SPEC.md`](./SPEC.md)).
 
 > **V1 has no real-time transcription** (spec D1). The transcript column is empty while recording and fills in only after the user presses stop.
 
