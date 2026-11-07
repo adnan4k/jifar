@@ -1,0 +1,29 @@
+[package]
+name = "jifar"
+description = "Jifar desktop app (Tauri shell)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "jifar_app"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+jifar-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tauri = { version = "2", features = [] }
+specta = { version = "=2.0.0-rc.26", features = ["derive"] }
+tauri-specta = { version = "=2.0.0-rc.26", features = ["derive", "typescript"] }
+specta-typescript = "0.0.13"
+
+[lints]
+workspace = true

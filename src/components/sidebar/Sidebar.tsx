@@ -1,5 +1,6 @@
 import { AudioLines, Search, Settings } from "lucide-react";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { useAppInfo } from "@/lib/native";
 import { useMeetings } from "@/lib/queries";
 import { cn, formatDate, formatDuration } from "@/lib/utils";
 import { useUi } from "@/stores/ui";
@@ -29,6 +30,7 @@ export function Sidebar() {
           <Settings className="size-4" />
           Settings
         </button>
+        <CoreStatus />
       </div>
     </aside>
   );
@@ -78,5 +80,15 @@ function MeetingList() {
         ))}
       </ul>
     </div>
+  );
+}
+
+function CoreStatus() {
+  const { data, isError } = useAppInfo();
+  const label = data ? `v${data.version}` : isError ? "core error" : "preview (mock data)";
+  return (
+    <p className="px-3 pt-1 text-[11px] text-muted/70" title={data?.dataDir}>
+      {label}
+    </p>
   );
 }

@@ -45,14 +45,15 @@ Sizes are relative effort (S ≈ < 1 week, M ≈ 1–2 weeks, L ≈ 2–4 weeks)
 
 Goal: an empty but complete repo where CI enforces the conventions from day one.
 
-- [ ] `git init`, `.gitignore` (target/, node_modules/, eval data, `*.opus`, `*.wav`), license decision.
-- [ ] Cargo workspace with empty crates: `jifar-audio`, `jifar-store`, `jifar-queue`, `jifar-providers`, `jifar-core`, plus `src-tauri` (Tauri 2 scaffold, React + TS + Vite, Tailwind v4, shadcn/ui, Biome).
-- [ ] Workspace lints: `unsafe_code` restricted, `clippy::unwrap_used`/`expect_used` denied outside tests, edition 2024.
-- [ ] CI (GitHub Actions, Ubuntu 22.04 + 24.04): `rustfmt`, `clippy -D warnings`, `cargo nextest`, `tsc --noEmit`, Biome, Vitest. **NFR-08**
-- [ ] Dependency guard in CI that fails if `jifar-audio` gains a dependency on `jifar-providers`, `jifar-queue` or `reqwest` (`cargo tree` check). This enforces the recording invariant mechanically.
-- [ ] tauri-specta wired up with a single `ping` command, and a CI check that the generated bindings are up to date.
-- [ ] Strict CSP and minimal Tauri capabilities in place from the first commit. **NFR-06**
-- [ ] `tracing` setup and XDG path resolution (`$XDG_DATA_HOME/jifar`, `$XDG_CONFIG_HOME/jifar`). **FR-PRV-02**
+- [x] `git init`, `.gitignore` (target/, node_modules/, eval data, `*.opus`, `*.wav`).
+- [ ] License decision (owner).
+- [x] Cargo workspace with empty crates: `jifar-audio`, `jifar-store`, `jifar-queue`, `jifar-providers`, `jifar-core`, plus `src-tauri` (Tauri 2 scaffold, React + TS + Vite, Tailwind v4, shadcn/ui, Biome).
+- [x] Workspace lints: `unsafe_code` restricted, `clippy::unwrap_used`/`expect_used` denied outside tests, edition 2024.
+- [x] CI (GitHub Actions, Ubuntu 22.04 + 24.04): `rustfmt`, `clippy -D warnings`, `cargo nextest`, `tsc --noEmit`, Biome, Vitest. **NFR-08**
+- [x] Dependency guard in CI that fails if `jifar-audio` gains a dependency on `jifar-providers`, `jifar-queue` or `reqwest` (`cargo tree` check). This enforces the recording invariant mechanically.
+- [x] tauri-specta wired up with a single `ping` command, and a CI check that the generated bindings are up to date.
+- [x] Strict CSP and minimal Tauri capabilities in place from the first commit. **NFR-06**
+- [x] `tracing` setup and XDG path resolution (`$XDG_DATA_HOME/jifar`, `$XDG_CONFIG_HOME/jifar`). **FR-PRV-02**
 
 **Exit:** a fresh clone builds and passes CI on both Ubuntu versions. `pnpm tauri dev` opens a window that calls `ping` through generated bindings.
 

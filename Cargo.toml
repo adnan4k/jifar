@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "src-tauri"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[workspace.dependencies]
+jifar-audio = { path = "crates/jifar-audio" }
+jifar-store = { path = "crates/jifar-store" }
+jifar-queue = { path = "crates/jifar-queue" }
+jifar-providers = { path = "crates/jifar-providers" }
+jifar-core = { path = "crates/jifar-core" }
+
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Conventions from the jifar skill / SPEC NFR-08.
+[workspace.lints.rust]
+unsafe_code = "deny" # FFI wrapper modules opt in locally, each block with `// SAFETY:`
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+todo = "warn"
