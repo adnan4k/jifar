@@ -7,6 +7,15 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+hound = "3.5"
+ogg = "0.9"
+opus = "0.4"
+rtrb = "0.4"
+thiserror.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = "3"

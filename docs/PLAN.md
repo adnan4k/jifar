@@ -61,12 +61,12 @@ Goal: an empty but complete repo where CI enforces the conventions from day one.
 
 Goal: record mic and system audio to separate, aligned, crash-safe Opus tracks from a CLI.
 
-- [ ] `CaptureSource` trait with a `FakeSource` (WAV fixtures) so the pipeline can be tested in CI without PipeWire.
-- [ ] Lock-free SPSC ring buffer (`rtrb`) between the RT callback and the worker. Overrun counter exposed. **NFR-02**
+- [x] `CaptureSource` trait with a `FakeSource` (WAV fixtures) so the pipeline can be tested in CI without PipeWire.
+- [x] Lock-free SPSC ring buffer (`rtrb`) between the RT callback and the worker. Overrun counter exposed. **NFR-02**
 - [ ] PipeWire backend: default source (mic) and default sink monitor (system), 48 kHz mono f32. **FR-REC-02, FR-REC-03**
 - [ ] PulseAudio fallback backend (`libpulse-binding`), selected at runtime. Test it on stock 22.04, which still ships PulseAudio by default.
 - [ ] Shared monotonic clock from start. Drift measurement between tracks, with resampling correction above 20 ms. **FR-REC-04**
-- [ ] Incremental Ogg/Opus writer (~32 kbps VOIP), flushed page by page so a crash loses ≤ ~5 s. **FR-REC-05**
+- [x] Incremental Ogg/Opus writer (~32 kbps VOIP), flushed page by page so a crash loses ≤ ~5 s. **FR-REC-05** (1 s pages, `fdatasync` every 4 s; libopus is built bundled via `opusic-sys`, so it is not a runtime dependency.)
 - [ ] Offline chunker (runs after stop, **not** in the capture pipeline, per D1): decode `.opus`, Silero VAD (`ort`), 15–30 s chunks at silence boundaries with a hard cap of 30 s, resample to 16 kHz WAV in `chunks/`, and skip chunks with no speech. `cargo run -p jifar-audio --example chunk <file.opus>`.
 - [ ] Per-track levels (~10 Hz) and silence detection (> 30 s). **FR-REC-08**
 - [ ] Pause/resume that keeps the timeline consistent. **FR-REC-09**
