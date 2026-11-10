@@ -14,13 +14,17 @@
 //! [`OggOpusWriter`] → [`DurableFile`], orchestrated by [`TrackRecorder`].
 //! A [`RecordingSession`] runs the `mic` and `system` tracks on one clock.
 //!
-//! Sources: `PipeWireSource` (feature `pipewire`, on by default) for real
-//! devices, [`FakeSource`] for tests and fixtures.
+//! Sources: `PipeWireSource` (feature `pipewire`) and `PulseSource`
+//! (feature `pulse`), both on by default, for real devices, chosen at runtime
+//! by [`Backend::detect`]; [`FakeSource`] for tests and fixtures.
 
+mod backend;
 mod error;
 mod fake;
 mod opus_reader;
 mod opus_writer;
+#[cfg(feature = "pulse")]
+mod pulse_source;
 #[cfg(feature = "pipewire")]
 mod pw_source;
 mod recorder;
@@ -28,12 +32,15 @@ mod ring;
 mod session;
 mod source;
 
+pub use backend::{Backend, CaptureTarget};
 pub use error::{AudioError, Result};
 pub use fake::{FakeSource, Pacing};
 pub use opus_reader::OggOpusReader;
 pub use opus_writer::{BITRATE_BPS, DurableFile, OggOpusWriter, SYNC_INTERVAL};
+#[cfg(feature = "pulse")]
+pub use pulse_source::PulseSource;
 #[cfg(feature = "pipewire")]
-pub use pw_source::{CaptureTarget, PipeWireSource};
+pub use pw_source::PipeWireSource;
 pub use recorder::{TrackRecorder, TrackStats};
 pub use ring::{CaptureStats, DEFAULT_RING_CAPACITY, RingReader, RtSink, ring};
 pub use session::{

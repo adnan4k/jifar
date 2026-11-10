@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 hound = "3.5"
+libpulse-binding = { version = "2.30", optional = true }
+libpulse-simple-binding = { version = "2.29", optional = true }
 ogg = "0.9"
 opus = "0.4"
 pipewire = { version = "0.10", optional = true }
@@ -24,11 +26,11 @@ tempfile = "3"
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [features]
-default = ["pipewire"]
+default = ["pipewire", "pulse"]
 # Native PipeWire capture. Needs libpipewire-0.3-dev and clang to build.
 # Without it only FakeSource is available (enough for the pipeline tests).
 pipewire = ["dep:pipewire"]
+# PulseAudio capture for systems without PipeWire audio (stock Ubuntu 22.04).
+# Needs libpulse-dev to build.
+pulse = ["dep:libpulse-binding", "dep:libpulse-simple-binding"]
 
-[[example]]
-name = "record"
-required-features = ["pipewire"]

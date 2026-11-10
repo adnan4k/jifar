@@ -1,12 +1,14 @@
 //! Records the default microphone and the system output (default sink
-//! monitor) to `<dir>/mic.opus` and `<dir>/system.opus` through PipeWire.
+//! monitor) to `<dir>/mic.opus` and `<dir>/system.opus` through PipeWire or
+//! PulseAudio (detected at runtime, or forced with `--backend`).
 //! This is the manual device check for M1: long runs, `kill -9` recovery,
 //! overruns and drift.
 //!
-//!     cargo run -p jifar-audio --example record -- <dir> [--duration SECS] [--mic-only | --system-only]
+//!     cargo run -p jifar-audio --example record -- <dir> [--duration SECS]
+//!         [--mic-only | --system-only] [--backend pipewire|pulse]
 //!
 //! Stops on Ctrl-C or after `--duration`. Prints a status line every 5 s.
-//! `RUST_LOG=debug` shows PipeWire stream state changes.
+//! `RUST_LOG=debug` shows stream state changes.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,7 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use jifar_audio::{
-    CaptureSource, PipeWireSource, RecordingSession, SessionStatus, Track, TrackStatus,
+    Backend, CaptureSource, CaptureTarget, RecordingSession, SessionStatus, Track, TrackStatus,
 };
 
 const STATUS_EVERY: Duration = Duration::from_secs(5);
@@ -24,12 +26,14 @@ struct Args {
     dir: PathBuf,
     duration: Option<Duration>,
     tracks: Vec<Track>,
+    backend: Option<Backend>,
 }
 
 fn parse_args() -> Result<Args, String> {
     let mut dir = None;
     let mut duration = None;
     let mut tracks = vec![Track::Mic, Track::System];
+    let mut backend = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -39,6 +43,13 @@ fn parse_args() -> Result<Args, String> {
                     .and_then(|s| s.parse().ok())
                     .ok_or("--duration needs a number of seconds")?;
                 duration = Some(Duration::from_secs(secs));
+            }
+            "--backend" => {
+                backend = Some(match args.next().as_deref() {
+                    Some("pipewire") => Backend::PipeWire,
+                    Some("pulse") => Backend::PulseAudio,
+                    _ => return Err("--backend needs pipewire or pulse".into()),
+                });
             }
             "--mic-only" => tracks = vec![Track::Mic],
             "--system-only" => tracks = vec![Track::System],
@@ -51,6 +62,7 @@ fn parse_args() -> Result<Args, String> {
         dir: dir.ok_or("missing output directory")?,
         duration,
         tracks,
+        backend,
     })
 }
 
@@ -68,7 +80,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if !msg.is_empty() {
                 eprintln!("error: {msg}");
             }
-            eprintln!("usage: record <dir> [--duration SECS] [--mic-only | --system-only]");
+            eprintln!(
+                "usage: record <dir> [--duration SECS] [--mic-only | --system-only] \
+                 [--backend pipewire|pulse]"
+            );
             std::process::exit(2);
         }
     };
@@ -79,21 +94,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ctrlc::set_handler(move || stop.store(true, Ordering::Relaxed))?;
     }
 
-    let sources: Vec<(Track, Box<dyn CaptureSource>)> = args
-        .tracks
-        .iter()
-        .map(|&t| {
-            let source: Box<dyn CaptureSource> = match t {
-                Track::Mic => Box::new(PipeWireSource::microphone()),
-                Track::System => Box::new(PipeWireSource::system_output()),
-            };
-            (t, source)
-        })
-        .collect();
+    let backend = match args.backend {
+        Some(b) => b,
+        None => Backend::detect()?,
+    };
+    let mut sources: Vec<(Track, Box<dyn CaptureSource>)> = Vec::new();
+    for &t in &args.tracks {
+        let target = match t {
+            Track::Mic => CaptureTarget::Microphone,
+            Track::System => CaptureTarget::SystemOutput,
+        };
+        sources.push((t, backend.open(target)?));
+    }
 
     let session = RecordingSession::start(&args.dir, sources)?;
     println!(
-        "recording to {} (Ctrl-C to stop{})",
+        "recording to {} via {backend} (Ctrl-C to stop{})",
         args.dir.display(),
         args.duration
             .map(|d| format!(", or after {} s", d.as_secs()))

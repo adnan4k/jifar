@@ -26,6 +26,7 @@ use pw::spa::pod::Pod;
 use pw::stream::{StreamFlags, StreamState};
 use tracing::{debug, info, warn};
 
+use crate::backend::CaptureTarget;
 use crate::ring::RtSink;
 use crate::source::CaptureSource;
 use crate::{AudioError, FRAME_SAMPLES, Result, SAMPLE_RATE};
@@ -34,25 +35,6 @@ use crate::{AudioError, FRAME_SAMPLES, Result, SAMPLE_RATE};
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 /// Scratch buffer for byte → f32 conversion in the callback (~85 ms).
 const SCRATCH_SAMPLES: usize = 4096;
-
-/// What a [`PipeWireSource`] records.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CaptureTarget {
-    /// The default input device (FR-REC-02).
-    Microphone,
-    /// The monitor of the default output device: everything the computer
-    /// plays, i.e. the other meeting participants (FR-REC-03).
-    SystemOutput,
-}
-
-impl CaptureTarget {
-    fn node_name(self) -> &'static str {
-        match self {
-            Self::Microphone => "jifar-mic",
-            Self::SystemOutput => "jifar-system",
-        }
-    }
-}
 
 /// State shared between the caller, the main-loop thread and the RT callback.
 #[derive(Default)]
