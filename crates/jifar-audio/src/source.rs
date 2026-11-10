@@ -25,4 +25,11 @@ pub trait CaptureSource: Send {
     fn is_finished(&self) -> bool {
         false
     }
+
+    /// A fault the source hit while running (stream error, device removed,
+    /// unexpected format). Capture may have stopped; samples already pushed
+    /// are still encoded. `None` while healthy.
+    fn error(&self) -> Option<String> {
+        None
+    }
 }

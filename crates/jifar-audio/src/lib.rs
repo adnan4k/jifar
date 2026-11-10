@@ -12,21 +12,33 @@
 //! Pipeline per track:
 //! [`CaptureSource`] → [`RtSink`] (lock-free ring) → worker thread →
 //! [`OggOpusWriter`] → [`DurableFile`], orchestrated by [`TrackRecorder`].
+//! A [`RecordingSession`] runs the `mic` and `system` tracks on one clock.
+//!
+//! Sources: `PipeWireSource` (feature `pipewire`, on by default) for real
+//! devices, [`FakeSource`] for tests and fixtures.
 
 mod error;
 mod fake;
 mod opus_reader;
 mod opus_writer;
+#[cfg(feature = "pipewire")]
+mod pw_source;
 mod recorder;
 mod ring;
+mod session;
 mod source;
 
 pub use error::{AudioError, Result};
 pub use fake::{FakeSource, Pacing};
 pub use opus_reader::OggOpusReader;
 pub use opus_writer::{BITRATE_BPS, DurableFile, OggOpusWriter, SYNC_INTERVAL};
+#[cfg(feature = "pipewire")]
+pub use pw_source::{CaptureTarget, PipeWireSource};
 pub use recorder::{TrackRecorder, TrackStats};
-pub use ring::{DEFAULT_RING_CAPACITY, Overruns, RingReader, RtSink, ring};
+pub use ring::{CaptureStats, DEFAULT_RING_CAPACITY, RingReader, RtSink, ring};
+pub use session::{
+    RecordingSession, SessionStatus, SessionSummary, Track, TrackStatus, TrackSummary,
+};
 pub use source::CaptureSource;
 
 /// Capture and archive sample rate (Hz). Everything in the capture path is

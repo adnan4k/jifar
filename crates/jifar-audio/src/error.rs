@@ -19,6 +19,8 @@ pub enum AudioError {
     AlreadyRunning,
     #[error("audio worker thread panicked")]
     WorkerPanicked,
+    #[error("invalid recording session: {0}")]
+    InvalidSession(String),
 }
 
 pub type Result<T, E = AudioError> = std::result::Result<T, E>;

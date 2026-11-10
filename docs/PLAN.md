@@ -63,16 +63,16 @@ Goal: record mic and system audio to separate, aligned, crash-safe Opus tracks f
 
 - [x] `CaptureSource` trait with a `FakeSource` (WAV fixtures) so the pipeline can be tested in CI without PipeWire.
 - [x] Lock-free SPSC ring buffer (`rtrb`) between the RT callback and the worker. Overrun counter exposed. **NFR-02**
-- [ ] PipeWire backend: default source (mic) and default sink monitor (system), 48 kHz mono f32. **FR-REC-02, FR-REC-03**
+- [x] PipeWire backend: default source (mic) and default sink monitor (system), 48 kHz mono f32. **FR-REC-02, FR-REC-03** (`PipeWireSource`, one main loop per stream, F32LE/48 kHz/mono negotiated so PipeWire converts; system uses `stream.capture.sink=true`. Behind the default-on `pipewire` feature.)
 - [ ] PulseAudio fallback backend (`libpulse-binding`), selected at runtime. Test it on stock 22.04, which still ships PulseAudio by default.
-- [ ] Shared monotonic clock from start. Drift measurement between tracks, with resampling correction above 20 ms. **FR-REC-04**
+- [ ] Shared monotonic clock from start. Drift measurement between tracks, with resampling correction above 20 ms. **FR-REC-04** (Clock, per-track first-sample offsets and drift measurement done in `RecordingSession`. Resampling correction still to do.)
 - [x] Incremental Ogg/Opus writer (~32 kbps VOIP), flushed page by page so a crash loses ≤ ~5 s. **FR-REC-05** (1 s pages, `fdatasync` every 4 s; libopus is built bundled via `opusic-sys`, so it is not a runtime dependency.)
 - [ ] Offline chunker (runs after stop, **not** in the capture pipeline, per D1): decode `.opus`, Silero VAD (`ort`), 15–30 s chunks at silence boundaries with a hard cap of 30 s, resample to 16 kHz WAV in `chunks/`, and skip chunks with no speech. `cargo run -p jifar-audio --example chunk <file.opus>`.
 - [ ] Per-track levels (~10 Hz) and silence detection (> 30 s). **FR-REC-08**
 - [ ] Pause/resume that keeps the timeline consistent. **FR-REC-09**
 - [ ] Device enumeration and selection. **FR-REC-07**
 - [ ] Worker panic handling: catch the panic, finalize what's on disk, report `needs_attention`.
-- [ ] `cargo run -p jifar-audio --example record` CLI.
+- [x] `cargo run -p jifar-audio --example record` CLI. (`<dir> [--duration SECS] [--mic-only|--system-only]`, prints overruns and drift every 5 s.)
 - [ ] **Spike:** `webrtc-audio-processing` AEC on mic vs. system. Measure the bleed reduction to answer **OQ-4**. Full integration can land in M3/M4. **FR-REC-10**
 
 **Exit (spec §11):** 60 min mic + system on Ubuntu 24.04 (PipeWire) and 22.04 (PulseAudio). Zero overruns. Drift ≤ 20 ms. Files are playable after `kill -9`. Audio CPU < 5% on a 4-core laptop. A short written result for the OQ-4 spike.

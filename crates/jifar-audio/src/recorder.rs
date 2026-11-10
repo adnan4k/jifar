@@ -10,7 +10,7 @@ use std::time::Duration;
 use tracing::{debug, info, warn};
 
 use crate::opus_writer::{DurableFile, OggOpusWriter};
-use crate::ring::{DEFAULT_RING_CAPACITY, Overruns, RingReader, ring};
+use crate::ring::{CaptureStats, DEFAULT_RING_CAPACITY, RingReader, ring};
 use crate::source::CaptureSource;
 use crate::{AudioError, Result, SAMPLE_RATE};
 
@@ -34,7 +34,7 @@ pub struct TrackRecorder {
     worker: Option<JoinHandle<Result<u64>>>,
     stop: Arc<AtomicBool>,
     samples: Arc<AtomicU64>,
-    overruns: Overruns,
+    stats: CaptureStats,
 }
 
 impl TrackRecorder {
@@ -49,7 +49,7 @@ impl TrackRecorder {
         ring_capacity: usize,
     ) -> Result<Self> {
         let writer = OggOpusWriter::new(DurableFile::create(path)?, serial_for(path))?;
-        let (sink, reader, overruns) = ring(ring_capacity);
+        let (sink, reader, stats) = ring(ring_capacity);
         let stop = Arc::new(AtomicBool::new(false));
         let samples = Arc::new(AtomicU64::new(0));
 
@@ -60,7 +60,13 @@ impl TrackRecorder {
                 .name(format!("audio-worker:{}", source.name()))
                 .spawn(move || run_worker(reader, writer, &stop, &samples))?
         };
-        source.start(sink)?;
+        if let Err(e) = source.start(sink) {
+            // Without this the worker would wait for samples forever.
+            stop.store(true, Ordering::Release);
+            let _ = worker.join();
+            let _ = std::fs::remove_file(path);
+            return Err(e);
+        }
         info!(source = source.name(), path = %path.display(), "track recording started");
 
         Ok(Self {
@@ -69,7 +75,7 @@ impl TrackRecorder {
             worker: Some(worker),
             stop,
             samples,
-            overruns,
+            stats,
         })
     }
 
@@ -83,7 +89,18 @@ impl TrackRecorder {
     }
 
     pub fn overrun_samples(&self) -> u64 {
-        self.overruns.samples()
+        self.stats.overrun_samples()
+    }
+
+    /// Live capture counters (first-sample time, delivered samples, overruns).
+    pub fn capture_stats(&self) -> &CaptureStats {
+        &self.stats
+    }
+
+    /// Error reported by the capture source (e.g. the device went away).
+    /// Audio already captured is still written; see [`CaptureSource::error`].
+    pub fn source_error(&self) -> Option<String> {
+        self.source.error()
     }
 
     /// See [`CaptureSource::is_finished`].
@@ -110,7 +127,7 @@ impl TrackRecorder {
         let stats = TrackStats {
             samples,
             duration_ms: samples * 1000 / u64::from(SAMPLE_RATE),
-            overrun_samples: self.overruns.samples(),
+            overrun_samples: self.stats.overrun_samples(),
         };
         if stats.overrun_samples > 0 {
             warn!(path = %self.path.display(), overruns = stats.overrun_samples, "track had ring-buffer overruns");
