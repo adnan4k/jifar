@@ -244,10 +244,24 @@ export const backend = {
    * Adds or updates a meeting recorded by the real core, so it shows in the
    * list until the real store lands (M3). It never gets mock segments.
    */
-  upsertRecorded(m: MeetingSummary, recorded: { dir: string; problems: string[] }): void {
+  upsertRecorded(
+    m: MeetingSummary,
+    recorded: { dir: string; problems: string[]; peaks?: number[] },
+  ): void {
+    // Transcription isn't connected yet, so a finished recording is shown as
+    // done rather than "Transcribing" forever.
+    if (m.status === "processing") m = { ...m, status: "ready" };
     const existing = meetings.find((x) => x.id === m.id);
     if (existing) {
-      Object.assign(existing, { ...m, title: m.title || existing.title, recorded });
+      Object.assign(existing, {
+        ...m,
+        title: m.title || existing.title,
+        recorded: {
+          ...existing.recorded,
+          ...recorded,
+          dir: recorded.dir || existing.recorded?.dir || "",
+        },
+      });
     } else {
       meetings.push({ ...m, segments: [], notes: null, progress: { done: 0, total: 0 }, recorded });
     }

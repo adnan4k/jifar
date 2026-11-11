@@ -184,6 +184,8 @@ export type RecordingStopped = {
 	meeting: Meeting,
 	/**  Why the meeting needs attention; empty when clean. */
 	problems: string[],
+	/**  Waveform overview of the mixed audio, 0..=1 per bar. */
+	peaks: (number | null)[],
 };
 
 export type Settings = Settings_Serialize | Settings_Deserialize;

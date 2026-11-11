@@ -103,6 +103,7 @@ pub async fn recording_stop(
     Ok(RecordingStopped {
         meeting,
         problems: stopped.problems,
+        peaks: stopped.peaks,
     })
 }
 

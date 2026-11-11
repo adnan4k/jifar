@@ -1,6 +1,7 @@
 //! Jifar desktop shell: window, IPC and app state. Domain logic lives in the
 //! `jifar-*` crates.
 
+mod audio_scheme;
 mod commands;
 mod dto;
 mod error;
@@ -96,6 +97,7 @@ pub fn run() -> anyhow::Result<()> {
             settings: Mutex::new(settings),
         })
         .invoke_handler(builder.invoke_handler())
+        .register_asynchronous_uri_scheme_protocol(audio_scheme::SCHEME, audio_scheme::handle)
         .setup(move |app| {
             builder.mount_events(app);
             // Without a tray there would be no indicator outside the window;

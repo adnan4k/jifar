@@ -168,7 +168,7 @@ Priority: **P0** = required for V1 release, **P1** = should ship with V1, **P2**
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **WebView** shows the UI only. It has no direct filesystem or network access. Tauri capabilities allow only Jifar's own commands, and a strict CSP is set.
+- **WebView** shows the UI only. It has no direct filesystem or network access. Tauri capabilities allow only Jifar's own commands, and a strict CSP is set. The one exception is audio playback: the read-only `jifar-audio://` URI scheme serves `mixed.opus`, `mic.opus` and `system.opus` from `meetings/<uuid>/` (nothing else), with HTTP range support for seeking. CSP `media-src` allows only that scheme.
 - **Rust core** owns everything else. Only `jifar-providers` may make network calls.
 - **Audio real-time rule:** PipeWire callbacks only copy samples into a lock-free SPSC ring buffer (`rtrb`). They never allocate, lock, do I/O or log. A separate worker thread does encoding, AEC, level metering and file writes. VAD and chunking run offline after stop (§6.3).
 - **Crash safety:** a panic in the audio worker is caught. The recording is finalized from what is already on disk, and the meeting moves to `needs_attention`. It never takes down the app silently.
@@ -180,10 +180,10 @@ Commands (all `async`, returning `Result<T, AppError>`):
 | Command                | Args                                         | Returns |
 | ---------------------- | -------------------------------------------- | ------- |
 | `ping`                 | —                                            | `{version, dataDir}` (health check, M0) |
-| `devices_list`         | —                                            | `{inputs[], outputs[]}` |
-| `recording_start`      | `{title?, language, micDevice?, sinkDevice?}` | `Meeting` |
+| `devices_list`         | —                                            | `{inputs[], outputs[]}`, each `{id, label, isDefault}`; `id` is an audio-server node name |
+| `recording_start`      | `{title?, language, micDevice?, sinkDevice?}` | `{meeting: Meeting, notices[]}` (notices: device fallbacks, a track that couldn't start) |
 | `recording_pause` / `recording_resume` | `{meetingId}`                 | `()` |
-| `recording_stop`       | `{meetingId}`                                | `Meeting` |
+| `recording_stop`       | `{meetingId}`                                | `{meeting: Meeting, problems[], peaks[]}` (problems → `needs_attention`; peaks: waveform of `mixed.opus`, 0..1) |
 | `meetings_list`        | `{cursor?, limit}`                           | `Page<MeetingSummary>` |
 | `meeting_get`          | `{meetingId}`                                | `MeetingDetail` |
 | `meeting_rename` / `meeting_delete` | `{meetingId, ...}`              | `()` |
@@ -191,16 +191,16 @@ Commands (all `async`, returning `Result<T, AppError>`):
 | `notes_generate`       | `{meetingId, outputLanguage}`                | `Notes` |
 | `search`               | `{query, limit}`                             | `SearchHit[]` |
 | `export_meeting`       | `{meetingId, format, path}`                  | `()` |
-| `settings_get` / `settings_set` | `Settings`                          | `Settings` |
+| `settings_get` / `settings_set` | `Settings {micDevice?, sinkDevice?, language}` | `Settings` |
 
 Events (Rust → UI):
 
 | Event              | Payload |
 | ------------------ | ------- |
-| `audio://levels`   | `{mic: dBFS, system: dBFS}` (~10 Hz) |
-| `audio://silent`   | `{track, sinceMs}` |
+| `audio://levels`   | `{meetingId, mic: dBFS?, system: dBFS?, elapsedMs, paused}` (~10 Hz while recording) |
+| `audio://silent`   | `{meetingId, track, sinceMs}` (`sinceMs` null when sound is back) |
 | `transcript://segments` | `{meetingId, segments[]}` |
-| `meeting://status` | `{meetingId, status}` |
+| `meeting://status` | `{meetingId, status}` (also for recordings started/stopped from the tray) |
 | `queue://status`   | `{pending, failed, online}` |
 | `app://error`      | `{code, message, fatal}` |
 
@@ -306,7 +306,7 @@ segments_fts / notes_fts  -- FTS5 external-content tables, unicode61 tokenizer
 
 | ID       | Requirement |
 | -------- | ----------- |
-| NFR-01   | Installs on Ubuntu 22.04/24.04 from `.deb` and AppImage. Runtime dependencies: PipeWire (or PulseAudio) and WebKitGTK 4.1. ONNX Runtime (`libonnxruntime.so`) ships inside the packages. No Python or FFmpeg needed. |
+| NFR-01   | Installs on Ubuntu 22.04/24.04 from `.deb` and AppImage. Runtime dependencies: PipeWire (or PulseAudio), WebKitGTK 4.1, and GStreamer `plugins-base` + `plugins-good` (Ogg/Opus playback). ONNX Runtime (`libonnxruntime.so`) ships inside the packages. No Python or FFmpeg needed. |
 | NFR-02   | Recording a 2-hour meeting drops no audio (zero ring-buffer overruns). Audio CPU usage stays < 5% on a 4-core laptop. |
 | NFR-03   | App ready in < 2 s. Idle RAM < 150 MB. Search returns in < 300 ms across 500 meetings. |
 | NFR-04   | Losing the network or a panic in the audio worker never corrupts finished audio. The meeting is recovered to `processing`. |

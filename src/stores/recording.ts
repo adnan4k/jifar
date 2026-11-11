@@ -189,6 +189,7 @@ export const useRecording = create<RecordingState>((set, get) => {
         backend.upsertRecorded(toSummary(res.meeting), {
           dir: res.meeting.dir,
           problems: res.problems,
+          peaks: res.peaks.map((p) => p ?? 0),
         });
         reset();
         if (res.problems.length) set({ notice: res.problems.join(" ") });

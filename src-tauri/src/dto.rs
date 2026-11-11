@@ -109,6 +109,8 @@ pub struct RecordingStopped {
     pub meeting: Meeting,
     /// Why the meeting needs attention; empty when clean.
     pub problems: Vec<String>,
+    /// Waveform overview of the mixed audio, 0..=1 per bar.
+    pub peaks: Vec<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

@@ -15,6 +15,7 @@ import type { MeetingDetail, Segment } from "@/lib/types";
 import { cn, formatTimestamp } from "@/lib/utils";
 import { useRecording } from "@/stores/recording";
 import { useUi } from "@/stores/ui";
+import { RecordingPlayer } from "./RecordingPlayer";
 
 export function TranscriptPane() {
   const selectedId = useUi((s) => s.selectedMeetingId);
@@ -93,7 +94,7 @@ function RecordedPanel({ meeting }: { meeting: MeetingDetail }) {
   const problems = meeting.recorded?.problems ?? [];
   return (
     <div className="grid flex-1 place-items-center p-8 text-center">
-      <div className="max-w-md space-y-4">
+      <div className="w-full max-w-xl space-y-4">
         <div className="mx-auto grid size-14 place-items-center rounded-full bg-accent-soft">
           {problems.length ? (
             <AlertTriangle className="size-6 text-warn" />
@@ -106,6 +107,12 @@ function RecordedPanel({ meeting }: { meeting: MeetingDetail }) {
           {formatTimestamp(meeting.durationMs)} of audio, recorded on this computer. Transcription
           is not connected yet; it arrives with the transcription milestone.
         </p>
+        <RecordingPlayer
+          key={meeting.id}
+          meetingId={meeting.id}
+          durationMs={meeting.durationMs}
+          peaks={meeting.recorded?.peaks}
+        />
         {meeting.recorded?.dir && (
           <p className="break-all rounded-lg bg-card px-3 py-2 font-mono text-xs text-muted">
             {meeting.recorded.dir}

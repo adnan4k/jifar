@@ -14,8 +14,8 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use jifar_audio::{
-    AudioDevice, AudioError, Backend, CaptureSource, CaptureTarget, RecordingSession,
-    SessionStatus, Track, resolve_device,
+    AudioDevice, AudioError, Backend, CaptureSource, CaptureTarget, MixInput, RecordingSession,
+    SessionStatus, Track, render_mixed, resolve_device,
 };
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -109,7 +109,12 @@ pub struct Stopped {
     pub meeting: MeetingInfo,
     /// Why the meeting needs attention; empty if the recording is clean.
     pub problems: Vec<String>,
+    /// Waveform overview of `mixed.opus` (0..=1), empty if mixing failed.
+    pub peaks: Vec<f32>,
 }
+
+/// Bars in the waveform overview returned on stop.
+pub const WAVEFORM_BARS: usize = 400;
 
 /// Live state of one track.
 #[derive(Debug, Clone, PartialEq)]
@@ -281,6 +286,27 @@ impl RecordingService {
         let summary = session.stop();
         let problems = summary.problems();
         meeting.duration_ms = summary.duration_ms;
+
+        // mixed.opus for playback and export (SPEC §6.3). It is derived from
+        // the finalized tracks, so failing here loses nothing.
+        // TODO(M3): move this into the post-stop pipeline with chunking, off
+        // the stop call (a 60 min meeting takes several seconds).
+        let inputs: Vec<MixInput> = summary
+            .tracks
+            .iter()
+            .filter(|t| t.outcome.is_ok() || t.path.is_file())
+            .map(|t| MixInput {
+                path: t.path.clone(),
+                start_offset_ms: t.start_offset_ms.unwrap_or(0),
+            })
+            .collect();
+        let peaks = match render_mixed(&inputs, &meeting.dir.join("mixed.opus"), WAVEFORM_BARS) {
+            Ok(report) => report.peaks,
+            Err(e) => {
+                warn!(meeting = %meeting.id, error = %e, "could not render mixed.opus");
+                Vec::new()
+            }
+        };
         // Waiting for transcription (queue: M3); see the module docs.
         meeting.status = if problems.is_empty() {
             MeetingStatus::Processing
@@ -289,7 +315,11 @@ impl RecordingService {
             MeetingStatus::NeedsAttention
         };
         info!(meeting = %meeting.id, duration_ms = meeting.duration_ms, "recording stopped");
-        Ok(Stopped { meeting, problems })
+        Ok(Stopped {
+            meeting,
+            problems,
+            peaks,
+        })
     }
 
     /// Stops whatever is recording (app exit). Files are finalized.
@@ -450,6 +480,8 @@ mod tests {
         assert!(stopped.meeting.duration_ms >= 300);
         assert!(stopped.meeting.dir.join("mic.opus").is_file());
         assert!(stopped.meeting.dir.join("system.opus").is_file());
+        assert!(stopped.meeting.dir.join("mixed.opus").is_file());
+        assert!(!stopped.peaks.is_empty());
         assert!(svc.live().is_none());
     }
 

@@ -101,8 +101,8 @@ Backend:
 - [ ] `jifar-store`: dedicated DB thread, WAL, `rusqlite_migration`, migration 001 = spec §7.2 schema, FTS5 tables with `tokenchars "'"`. UUIDv7 IDs.
 - [ ] `jifar-queue`: persistent `asr_jobs` state machine, exponential backoff + jitter (5 s → 10 min), restart recovery (`in_flight` → `pending`), connectivity detection that pauses and resumes the queue, manual "retry now". **FR-TRN-04**
 - [ ] `jifar-core::MeetingService`: start/stop/pause orchestration. On stop: render `mixed.opus`, run the offline chunker, create jobs, then jobs → segments. Meeting status `recording → processing → ready / needs_attention`. A crash mid-recording recovers by chunking whatever is on disk.
-- [ ] Tauri commands and events from spec §6.2 (recording, meetings, devices, settings), all typed via tauri-specta. `AppError` with stable codes.
-- [ ] System tray with start/stop and a recording indicator visible whenever capture is active. **FR-REC-01, FR-REC-06, NFR-05**
+- [ ] Tauri commands and events from spec §6.2 (recording, meetings, devices, settings), all typed via tauri-specta. `AppError` with stable codes. (Done for recording, devices and settings: `RecordingService` in `jifar-core`, all four events. Meetings commands wait for `jifar-store`.)
+- [x] System tray with start/stop and a recording indicator visible whenever capture is active. **FR-REC-01, FR-REC-06, NFR-05** (Always-visible tray; red record dot + elapsed time while capturing, "microphone still open" while paused. Exiting the app finalizes an active recording.)
 
 UI:
 - [ ] App layout, TanStack Router, and a query layer over the generated bindings.
@@ -112,7 +112,7 @@ UI:
 - [ ] Meeting detail: audio player, transcript (Me/Others by track), click a segment to seek. **FR-HIS-03, FR-TRN-06**
 - [ ] Rename and delete (delete removes files after confirmation). **FR-HIS-04**
 - [ ] Settings: devices, provider keys, a plain-language data-flow explanation. **FR-PRV-03, FR-REC-07**
-- [ ] **WebKitGTK playback check early in M3:** Ogg/Opus playback and seeking. See risk R3.
+- [ ] **WebKitGTK playback check early in M3:** Ogg/Opus playback and seeking. See risk R3. (`mixed.opus` rendered on stop with a waveform; player in the saved-recording view. Waiting on a run in the real app.)
 
 **Exit:** record a 30-min call, stop, and get a full transcript with no manual steps. Stop while offline and see the meeting wait in `processing`, then the queue drain once the network is back. `kill -9` mid-recording, relaunch, and get the meeting recovered. Playback and seek work on 22.04 and 24.04. Startup < 2 s, idle RAM < 150 MB. **NFR-03, NFR-04**
 
@@ -179,8 +179,8 @@ whisper.cpp / ONNX ASR and llama.cpp evaluated with the same `jifar-eval` harnes
 These need a spec decision. Under the project rules they can't just be added in code.
 
 1. **Missing IPC commands.** Spec §6.2 has no command for: retrying failed jobs on demand (FR-TRN-04), re-transcribing a meeting (FR-TRN-07), saving user-edited notes (FR-AI-04), cancelling a recording, or getting queue status on demand. Proposal: `queue_retry {meetingId?}`, `meeting_retranscribe {meetingId, confirmOverwriteEdits}`, `notes_save {meetingId, body}`, `queue_status`.
-2. **Audio playback path into the WebView.** The WebView has no filesystem access, but FR-TRN-06 / FR-HIS-03 need it to play `mixed.opus`. Options: (a) Tauri asset protocol scoped to `$XDG_DATA_HOME/jifar/meetings/**`, or (b) a custom `jifar-audio://` URI scheme handler that serves byte ranges. Either one widens capabilities, so it needs a spec change. Recommendation: (b), because it keeps the scope explicit and supports range requests for seeking.
-3. **GStreamer runtime dependency.** WebKitGTK plays media through GStreamer. Ogg/Opus playback needs `gstreamer1.0-plugins-base/good` installed, so NFR-01 should list them.
+2. ~~**Audio playback path into the WebView.**~~ Resolved 2026-11-11: option (b), `jifar-audio://` (spec §6.1). The WebView has no filesystem access, but FR-TRN-06 / FR-HIS-03 need it to play `mixed.opus`. Options: (a) Tauri asset protocol scoped to `$XDG_DATA_HOME/jifar/meetings/**`, or (b) a custom `jifar-audio://` URI scheme handler that serves byte ranges. Either one widens capabilities, so it needs a spec change. Recommendation: (b), because it keeps the scope explicit and supports range requests for seeking.
+3. ~~**GStreamer runtime dependency.**~~ Resolved 2026-11-11: listed in NFR-01. WebKitGTK plays media through GStreamer. Ogg/Opus playback needs `gstreamer1.0-plugins-base/good` installed, so NFR-01 should list them.
 4. **Chunk retention default.** Spec §7.1 says chunks are deleted after transcription and that this is "configurable". Name the setting and its default, and decide whether re-transcription (FR-TRN-07) regenerates chunks from the Opus tracks. It must, if chunks are deleted.
 5. ~~Silent chunks.~~ Resolved in spec v0.3 §6.3: chunks with no speech are not sent to ASR.
 6. **Keywords.** The design reference has a Keywords panel, but `MeetingNotes` (spec §7.2) has no `keywords` field. Proposal: add `keywords[]` to `MeetingNotes` as a new P1 requirement, FR-AI-07.
@@ -219,4 +219,6 @@ Record plan-level decisions here (P1 cuts, re-sequencing, go/no-go outcomes). Pr
 | 2026-11-07 | Chunking runs offline after stop, not during capture. | One code path for normal processing, crash recovery and re-transcription. Lower CPU and risk while recording. |
 | 2026-11-07 | UI follows the reference design in [`DESIGN.md`](./DESIGN.md). | Product owner choice. |
 | 2026-11-07 | **UI shell built first**, ahead of M1, against a mock backend (`src/lib/mock-backend.ts`) that mirrors spec §6.2. | Product owner wants to validate the design early. The mock is replaced by tauri-specta bindings in M3. No Rust toolchain needed yet. |
+| 2026-11-11 | M3's recording slice (core service, commands/events, tray, UI wiring, playback) done before `jifar-store`. | Product owner wants to test recording through the real UI. Same work, different order. |
+| 2026-11-11 | Audio reaches the WebView only through the read-only `jifar-audio://` scheme. | Product owner asked for playback now; scheme keeps the scope explicit (PLAN §6.2). |
 | 2026-11-11 | ONNX Runtime is loaded dynamically (`ort` `load-dynamic`), not downloaded at build time. | ort's build-time download pulls `ureq` into jifar-audio, which `check-deps.sh` forbids. Dynamic loading keeps the guard strict, and a missing library can only affect chunking. M5 packaging must bundle `libonnxruntime.so` (R7). |

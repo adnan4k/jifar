@@ -45,7 +45,7 @@ export interface MeetingDetail extends MeetingSummary {
    * Set for meetings recorded by the real Rust core. Until the store and
    * queue exist (M3) they have audio on disk but no transcript yet.
    */
-  recorded?: { dir: string; problems: string[] };
+  recorded?: { dir: string; problems: string[]; peaks?: number[] };
 }
 
 export interface AudioDevice {

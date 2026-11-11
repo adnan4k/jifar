@@ -29,6 +29,13 @@ function NotesBody({ meeting }: { meeting: MeetingDetail | undefined }) {
     return <Hint>Select a meeting to see its summary, decisions and action items.</Hint>;
   if (meeting.status === "recording")
     return <Hint>Notes are generated from the transcript after the meeting.</Hint>;
+  if (meeting.recorded && meeting.segments.length === 0)
+    return (
+      <Hint>
+        Notes are made from the transcript. Transcription isn't connected yet, so this recording has
+        none.
+      </Hint>
+    );
   if (meeting.status === "processing")
     return (
       <div className="space-y-3">

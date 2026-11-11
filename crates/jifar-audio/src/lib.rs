@@ -28,6 +28,7 @@ mod drift;
 mod error;
 mod fake;
 mod level;
+mod mix;
 mod opus_reader;
 mod opus_writer;
 #[cfg(feature = "pulse")]
@@ -47,6 +48,7 @@ pub use device::{AudioDevice, DeviceChoice, DeviceKind, resolve_device};
 pub use error::{AudioError, Result};
 pub use fake::{FakeSource, Pacing};
 pub use level::{LEVEL_WINDOW, Level, MIN_DBFS, SILENCE_DBFS, SILENCE_WARNING_MS, to_dbfs};
+pub use mix::{MixInput, MixReport, render_mixed};
 pub use opus_reader::OggOpusReader;
 pub use opus_writer::{BITRATE_BPS, DurableFile, OggOpusWriter, SYNC_INTERVAL};
 #[cfg(feature = "pulse")]
