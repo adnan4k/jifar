@@ -26,6 +26,7 @@ mod chunker;
 mod drift;
 mod error;
 mod fake;
+mod level;
 mod opus_reader;
 mod opus_writer;
 #[cfg(feature = "pulse")]
@@ -43,6 +44,7 @@ pub use backend::{Backend, CaptureTarget};
 pub use chunker::{Chunk, ChunkReport, ChunkerConfig, chunk_file_name, chunk_track};
 pub use error::{AudioError, Result};
 pub use fake::{FakeSource, Pacing};
+pub use level::{LEVEL_WINDOW, Level, MIN_DBFS, SILENCE_DBFS, SILENCE_WARNING_MS, to_dbfs};
 pub use opus_reader::OggOpusReader;
 pub use opus_writer::{BITRATE_BPS, DurableFile, OggOpusWriter, SYNC_INTERVAL};
 #[cfg(feature = "pulse")]

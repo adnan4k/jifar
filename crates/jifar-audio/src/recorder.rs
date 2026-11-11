@@ -1,6 +1,6 @@
 //! [`TrackRecorder`]: one capture source → ring buffer → worker thread →
-//! drift correction → incremental Ogg/Opus file. One instance per track
-//! (`mic`, `system`).
+//! drift correction → level meter → incremental Ogg/Opus file. One instance
+//! per track (`mic`, `system`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 use crate::drift::DriftCorrector;
+use crate::level::{Level, LevelMeter, LevelShared};
 use crate::opus_writer::{DurableFile, OggOpusWriter};
 use crate::ring::{CaptureStats, DEFAULT_RING_CAPACITY, RingReader, ring};
 use crate::source::CaptureSource;
@@ -52,6 +53,7 @@ pub struct TrackRecorder {
     stop: Arc<AtomicBool>,
     samples: Arc<AtomicU64>,
     drift: Arc<DriftCounters>,
+    levels: Arc<LevelShared>,
     stats: CaptureStats,
 }
 
@@ -76,12 +78,14 @@ impl TrackRecorder {
         let stop = Arc::new(AtomicBool::new(false));
         let samples = Arc::new(AtomicU64::new(0));
         let drift = Arc::new(DriftCounters::default());
+        let levels = Arc::new(LevelShared::default());
 
         let worker = {
             let ctx = WorkerCtx {
                 stop: Arc::clone(&stop),
                 samples: Arc::clone(&samples),
                 drift: Arc::clone(&drift),
+                levels: Arc::clone(&levels),
                 stats: stats.clone(),
             };
             thread::Builder::new()
@@ -104,8 +108,20 @@ impl TrackRecorder {
             stop,
             samples,
             drift,
+            levels,
             stats,
         })
+    }
+
+    /// Level of the last 100 ms written (FR-REC-08). `None` until the first
+    /// 100 ms of audio has been written.
+    pub fn level(&self) -> Option<Level> {
+        self.levels.level()
+    }
+
+    /// Current run of silence (below [`crate::SILENCE_DBFS`]) in ms of audio.
+    pub fn silent_ms(&self) -> u64 {
+        self.levels.silent_ms()
     }
 
     pub fn path(&self) -> &Path {
@@ -198,6 +214,7 @@ struct WorkerCtx {
     stop: Arc<AtomicBool>,
     samples: Arc<AtomicU64>,
     drift: Arc<DriftCounters>,
+    levels: Arc<LevelShared>,
     stats: CaptureStats,
 }
 
@@ -209,7 +226,9 @@ fn run_worker(
 ) -> Result<u64> {
     let mut buf = vec![0.0_f32; READ_BUF];
     let mut next_drift_check = Instant::now() + DRIFT_INTERVAL;
+    let mut meter = LevelMeter::new(Arc::clone(&ctx.levels));
     let mut write = |block: &[f32]| -> Result<()> {
+        meter.feed(block);
         writer.write_samples(block)?;
         ctx.samples
             .store(writer.samples_written(), Ordering::Relaxed);

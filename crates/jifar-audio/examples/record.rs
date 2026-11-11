@@ -2,7 +2,7 @@
 //! monitor) to `<dir>/mic.opus` and `<dir>/system.opus` through PipeWire or
 //! PulseAudio (detected at runtime, or forced with `--backend`).
 //! This is the manual device check for M1: long runs, `kill -9` recovery,
-//! overruns, drift and pause/resume.
+//! overruns, drift, levels/silence and pause/resume.
 //!
 //!     cargo run -p jifar-audio --example record -- <dir> [--duration SECS]
 //!         [--mic-only | --system-only] [--backend pipewire|pulse]
@@ -221,12 +221,22 @@ fn print_status(status: &SessionStatus) {
 fn track_status(t: &TrackStatus) -> String {
     let secs = t.samples_written as f64 / f64::from(jifar_audio::SAMPLE_RATE);
     match t.drift_ms {
-        Some(drift) => format!(
-            "{} {secs:.1}s ovr={} drift={drift:+.1}ms corr={:+.1}ms",
-            t.track.as_str(),
-            t.overrun_samples,
-            t.drift_correction_ms
-        ),
+        Some(drift) => {
+            let level = t.level.map_or("-".to_owned(), |l| {
+                format!("{:.0}/{:.0}dBFS", l.rms_dbfs, l.peak_dbfs)
+            });
+            let silence = if t.silence_warning() {
+                format!(" SILENT {}s", t.silent_ms / 1000)
+            } else {
+                String::new()
+            };
+            format!(
+                "{} {secs:.1}s lvl={level} ovr={} drift={drift:+.1}ms corr={:+.1}ms{silence}",
+                t.track.as_str(),
+                t.overrun_samples,
+                t.drift_correction_ms
+            )
+        }
         None => format!("{} waiting for audio", t.track.as_str()),
     }
 }

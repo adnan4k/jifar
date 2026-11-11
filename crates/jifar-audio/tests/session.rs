@@ -289,3 +289,51 @@ fn pause_cuts_paused_time_out_of_both_tracks() {
         assert!((4_300..4_700).contains(&ms), "{:?}: {ms} ms", t.track);
     }
 }
+
+#[test]
+fn levels_and_silence_are_reported_per_track() {
+    let dir = tempfile::tempdir().unwrap();
+    // Mic: 0.5-amplitude tone (-9 dBFS RMS). System: nothing playing.
+    let session = RecordingSession::start(
+        &dir.path().join("meeting"),
+        vec![
+            (Track::Mic, fake(sine(300.0, 5.0))),
+            (Track::System, fake(vec![0.0; SAMPLE_RATE as usize * 5])),
+        ],
+    )
+    .unwrap();
+    thread::sleep(Duration::from_millis(1_500));
+    let st = session.status();
+    session.stop();
+
+    let mic = st.track(Track::Mic).unwrap();
+    let level = mic.level.unwrap();
+    assert!((level.rms_dbfs + 9.0).abs() < 1.0, "{level:?}");
+    assert!((level.peak_dbfs + 6.0).abs() < 1.0, "{level:?}");
+    assert_eq!(mic.silent_ms, 0);
+
+    let system = st.track(Track::System).unwrap();
+    assert_eq!(system.level.unwrap().rms_dbfs, jifar_audio::MIN_DBFS);
+    assert!(system.silent_ms >= 1_000, "{} ms", system.silent_ms);
+    assert!(!system.silence_warning(), "only after 30 s");
+}
+
+#[test]
+fn a_device_that_stops_delivering_reads_as_silent() {
+    let dir = tempfile::tempdir().unwrap();
+    // Delivers 0.5 s of tone, then nothing, like a dead stream. Drift
+    // correction fills the gap with silence, so the meter sees it.
+    let session = RecordingSession::start(
+        &dir.path().join("meeting"),
+        vec![(Track::Mic, fake(sine(300.0, 0.5)))],
+    )
+    .unwrap();
+    thread::sleep(Duration::from_millis(4_000));
+    let mic = session.status().track(Track::Mic).cloned().unwrap();
+    session.stop();
+    assert!(
+        mic.silent_ms >= 1_000,
+        "dead mic silent for only {} ms",
+        mic.silent_ms
+    );
+}

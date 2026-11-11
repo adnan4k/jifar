@@ -27,6 +27,7 @@ use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
 
+use crate::level::{Level, SILENCE_WARNING_MS};
 use crate::recorder::{TrackRecorder, TrackStats};
 use crate::source::CaptureSource;
 use crate::{AudioError, Result, SAMPLE_RATE};
@@ -74,6 +75,11 @@ pub struct TrackStatus {
     /// Net audio added (positive) or removed so far to hold the track to the
     /// session clock (drift correction and stall silence).
     pub drift_correction_ms: f64,
+    /// Level of the last 100 ms written. `None` until audio has been written.
+    pub level: Option<Level>,
+    /// Current run of silence in ms of recorded audio (0 while there is
+    /// sound). See [`Self::silence_warning`].
+    pub silent_ms: u64,
     /// False if the encoder worker stopped early.
     pub healthy: bool,
     /// Fault reported by the capture source.
@@ -100,7 +106,24 @@ pub struct SessionStatus {
     pub failed_to_start: Vec<(Track, String)>,
 }
 
+impl TrackStatus {
+    /// True once the track has been silent for more than 30 s (FR-REC-08):
+    /// muted or wrong mic, nothing playing, or a device that stopped.
+    pub fn silence_warning(&self) -> bool {
+        self.silent_ms > SILENCE_WARNING_MS
+    }
+}
+
 impl SessionStatus {
+    /// Tracks currently over the silence limit.
+    pub fn silent_tracks(&self) -> Vec<Track> {
+        self.tracks
+            .iter()
+            .filter(|t| t.silence_warning())
+            .map(|t| t.track)
+            .collect()
+    }
+
     pub fn track(&self, track: Track) -> Option<&TrackStatus> {
         self.tracks.iter().find(|t| t.track == track)
     }
@@ -296,6 +319,8 @@ impl RecordingSession {
                         wall_ms - audio_ms
                     }),
                     drift_correction_ms: t.recorder.drift_correction_ms(),
+                    level: t.recorder.level(),
+                    silent_ms: t.recorder.silent_ms(),
                     healthy: t.recorder.is_healthy(),
                     source_error: t.recorder.source_error(),
                 }
