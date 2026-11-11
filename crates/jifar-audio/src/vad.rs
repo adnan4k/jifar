@@ -136,6 +136,7 @@ fn environment() -> Result<&'static Environment> {
     static ENV: OnceLock<Result<Environment, String>> = OnceLock::new();
     ENV.get_or_init(|| {
         let path = std::env::var_os("ORT_DYLIB_PATH")
+            .or_else(dev_runtime)
             .unwrap_or_else(|| "libonnxruntime.so".into());
         ort::init_from(&path)
             .map_err(|e| {
@@ -150,6 +151,20 @@ fn environment() -> Result<&'static Environment> {
     })
     .as_ref()
     .map_err(|e| AudioError::Vad(e.clone()))
+}
+
+/// Debug builds only: the copy `scripts/fetch-onnxruntime.sh` downloads into
+/// the repo's `target/`, so `pnpm tauri dev` works without exporting
+/// `ORT_DYLIB_PATH`. Release builds use the packaged library.
+fn dev_runtime() -> Option<std::ffi::OsString> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/onnxruntime");
+    std::fs::read_dir(dir).ok()?.flatten().find_map(|entry| {
+        let lib = entry.path().join("lib/libonnxruntime.so");
+        lib.is_file().then(|| lib.into_os_string())
+    })
 }
 
 fn vad_err(e: impl std::fmt::Display) -> AudioError {

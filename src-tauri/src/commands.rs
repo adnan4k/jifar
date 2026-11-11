@@ -101,6 +101,7 @@ pub async fn recording_stop(
 ) -> Result<RecordingStopped, AppError> {
     let rec = Arc::clone(&state.recording);
     let stopped = blocking(move || rec.stop(&meeting_id).map_err(AppError::from)).await?;
+    crate::transcribe::after_stop(&app, &stopped);
     let meeting: crate::dto::Meeting = stopped.meeting.into();
     notify(&app, &meeting);
     Ok(RecordingStopped {
@@ -171,6 +172,21 @@ pub async fn provider_key_test(
     provider: ProviderId,
 ) -> Result<ProviderKeyTest, AppError> {
     Ok(state.keys.test(provider.into()).await.into())
+}
+
+/// Re-runs a meeting's unfinished transcription (after fixing the key or
+/// balance, or back online). Finished chunks are not sent again.
+#[tauri::command]
+#[specta::specta]
+pub async fn queue_retry(
+    transcription: State<'_, jifar_core::transcription::TranscriptionService>,
+    meeting_id: String,
+) -> Result<(), AppError> {
+    use jifar_core::transcription::RetryError;
+    transcription.retry(&meeting_id).map_err(|e| match e {
+        RetryError::Unknown => AppError::new(ErrorCode::MeetingNotFound, e.to_string()),
+        RetryError::Running => AppError::new(ErrorCode::InvalidInput, e.to_string()),
+    })
 }
 
 pub(crate) fn notify(app: &AppHandle, meeting: &crate::dto::Meeting) {

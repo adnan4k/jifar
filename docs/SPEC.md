@@ -191,6 +191,7 @@ Commands (all `async`, returning `Result<T, AppError>`):
 | `notes_generate`       | `{meetingId, outputLanguage}`                | `Notes` |
 | `search`               | `{query, limit}`                             | `SearchHit[]` |
 | `export_meeting`       | `{meetingId, format, path}`                  | `()` |
+| `queue_retry`          | `{meetingId}`                                | `()`. Re-runs unfinished chunks; finished ones aren't sent again (idempotent request IDs) |
 | `settings_get` / `settings_set` | `Settings {micDevice?, sinkDevice?, language}` | `Settings` |
 | `provider_key_status`  | `{provider}` (`"addis_scribe"`)              | `{saved, hint?, keyringError?}`. The key itself never crosses IPC; `hint` is its last 4 characters |
 | `provider_key_set`     | `{provider, key}`                            | `{saved, hint?, keyringError?}` (stored in the OS keyring, FR-PRV-04) |
@@ -203,7 +204,8 @@ Events (Rust → UI):
 | ------------------ | ------- |
 | `audio://levels`   | `{meetingId, mic: dBFS?, system: dBFS?, elapsedMs, paused}` (~10 Hz while recording) |
 | `audio://silent`   | `{meetingId, track, sinceMs}` (`sinceMs` null when sound is back) |
-| `transcript://segments` | `{meetingId, segments[]}` |
+| `transcript://segments` | `{meetingId, segments[]}`, each `{id, track, startMs, endMs, text}`, after each chunk |
+| `transcript://progress` | `{meetingId, done, failed, total, finished, blocked: auth\|credits\|null, message?}` |
 | `meeting://status` | `{meetingId, status}` (also for recordings started/stopped from the tray) |
 | `queue://status`   | `{pending, failed, online}` |
 | `app://error`      | `{code, message, fatal}` |

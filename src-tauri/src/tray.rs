@@ -90,7 +90,10 @@ fn on_menu(app: &AppHandle, id: &str) {
                     start_from_settings(&rec, &settings).map(|s| s.meeting)
                 } else {
                     match rec.stop_any() {
-                        Some(s) => Ok(s.meeting),
+                        Some(s) => {
+                            crate::transcribe::after_stop(&app, &s);
+                            Ok(s.meeting)
+                        }
                         None => return,
                     }
                 };

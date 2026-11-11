@@ -56,3 +56,50 @@ pub struct AppErrorEvent {
     pub message: String,
     pub fatal: bool,
 }
+
+/// One transcribed segment, on the recording clock.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentDto {
+    /// Stable within the meeting: `<track>-<chunk>-<n>`.
+    pub id: String,
+    pub track: TrackDto,
+    pub start_ms: f64,
+    pub end_ms: f64,
+    /// Exactly as transcribed (Qubee apostrophes intact).
+    pub text: String,
+}
+
+/// Segments from one finished chunk.
+#[derive(Debug, Clone, Serialize, specta::Type, Event)]
+#[tauri_specta(event_name = "transcript://segments")]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptSegments {
+    pub meeting_id: String,
+    pub segments: Vec<SegmentDto>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockedReason {
+    /// No API key, or it was rejected.
+    Auth,
+    /// Balance too low.
+    Credits,
+}
+
+/// Transcription progress for a meeting. `blocked` means it is paused until
+/// the user fixes the key or balance and calls `queue_retry`.
+#[derive(Debug, Clone, Serialize, specta::Type, Event)]
+#[tauri_specta(event_name = "transcript://progress")]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptProgress {
+    pub meeting_id: String,
+    pub done: u32,
+    pub failed: u32,
+    pub total: u32,
+    pub finished: bool,
+    pub blocked: Option<BlockedReason>,
+    /// Why it is blocked, or why it couldn't start.
+    pub message: Option<String>,
+}

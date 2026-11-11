@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { isTauri } from "@/lib/platform";
 import { cn, formatTimestamp } from "@/lib/utils";
+import { useUi } from "@/stores/ui";
 
 const BARS = 120;
 
@@ -19,10 +20,13 @@ export function RecordingPlayer({
   meetingId,
   durationMs,
   peaks,
+  compact = false,
 }: {
   meetingId: string;
   durationMs: number;
   peaks: number[] | undefined;
+  /** Shorter waveform, for the bar under the transcript. */
+  compact?: boolean;
 }) {
   const audio = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -52,6 +56,15 @@ export function RecordingPlayer({
     };
   }, [meetingId]);
   const totalMs = mediaMs ?? durationMs;
+  const seekNonce = useUi((s) => s.seekNonce);
+
+  // Clicking a transcript segment seeks the audio there.
+  useEffect(() => {
+    const el = audio.current;
+    if (!el || seekNonce === 0) return;
+    el.currentTime = useUi.getState().playheadMs / 1000;
+    setPositionMs(useUi.getState().playheadMs);
+  }, [seekNonce]);
   const bars = useMemo(() => resample(peaks ?? [], BARS), [peaks]);
   const progress = totalMs > 0 ? positionMs / totalMs : 0;
 
@@ -72,12 +85,13 @@ export function RecordingPlayer({
     if (!el || totalMs <= 0) return;
     el.currentTime = (fraction * totalMs) / 1000;
     setPositionMs(fraction * totalMs);
+    useUi.setState({ playheadMs: fraction * totalMs });
   };
 
   if (!isTauri()) return null;
 
   return (
-    <div className="w-full space-y-3 rounded-xl bg-card p-4">
+    <div className={cn("w-full", compact ? "space-y-2" : "space-y-3 rounded-xl bg-card p-4")}>
       {/* biome-ignore lint/a11y/useMediaCaption: meeting audio has no caption track; the transcript is the text alternative */}
       <audio
         ref={audio}
@@ -86,7 +100,12 @@ export function RecordingPlayer({
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onEnded={() => setPlaying(false)}
-        onTimeUpdate={(e) => setPositionMs(e.currentTarget.currentTime * 1000)}
+        onTimeUpdate={(e) => {
+          const ms = e.currentTarget.currentTime * 1000;
+          setPositionMs(ms);
+          // Highlights the segment being played (without seeking again).
+          useUi.setState({ playheadMs: ms });
+        }}
         onLoadedMetadata={(e) => {
           const d = e.currentTarget.duration;
           if (Number.isFinite(d) && d > 0) setMediaMs(d * 1000);
@@ -96,7 +115,10 @@ export function RecordingPlayer({
       <button
         type="button"
         aria-label="Seek"
-        className="flex h-16 w-full cursor-pointer items-center gap-[2px]"
+        className={cn(
+          "flex w-full cursor-pointer items-center gap-[2px]",
+          compact ? "h-9" : "h-16",
+        )}
         onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           seekTo(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)));

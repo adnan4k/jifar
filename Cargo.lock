@@ -2265,6 +2265,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "jifar-core",
+ "jifar-providers",
  "serde",
  "specta",
  "specta-typescript",
@@ -2301,6 +2302,7 @@ dependencies = [
 name = "jifar-core"
 version = "0.0.1"
 dependencies = [
+ "async-trait",
  "jifar-audio",
  "jifar-providers",
  "serde",

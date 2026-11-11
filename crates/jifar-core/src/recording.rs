@@ -104,9 +104,20 @@ pub struct Started {
     pub notices: Vec<String>,
 }
 
+/// One finalized track archive, ready for chunking.
+#[derive(Debug, Clone)]
+pub struct TrackAudio {
+    pub track: Track,
+    pub path: PathBuf,
+    /// Where its first sample sits on the recording clock.
+    pub start_offset_ms: i64,
+}
+
 #[derive(Debug)]
 pub struct Stopped {
     pub meeting: MeetingInfo,
+    /// Tracks with audio on disk (input for transcription).
+    pub tracks: Vec<TrackAudio>,
     /// Why the meeting needs attention; empty if the recording is clean.
     pub problems: Vec<String>,
     /// Waveform overview of `mixed.opus` (0..=1), empty if mixing failed.
@@ -291,13 +302,21 @@ impl RecordingService {
         // the finalized tracks, so failing here loses nothing.
         // TODO(M3): move this into the post-stop pipeline with chunking, off
         // the stop call (a 60 min meeting takes several seconds).
-        let inputs: Vec<MixInput> = summary
+        let tracks: Vec<TrackAudio> = summary
             .tracks
             .iter()
             .filter(|t| t.outcome.is_ok() || t.path.is_file())
-            .map(|t| MixInput {
+            .map(|t| TrackAudio {
+                track: t.track,
                 path: t.path.clone(),
                 start_offset_ms: t.start_offset_ms.unwrap_or(0),
+            })
+            .collect();
+        let inputs: Vec<MixInput> = tracks
+            .iter()
+            .map(|t| MixInput {
+                path: t.path.clone(),
+                start_offset_ms: t.start_offset_ms,
             })
             .collect();
         let peaks = match render_mixed(&inputs, &meeting.dir.join("mixed.opus"), WAVEFORM_BARS) {
@@ -317,6 +336,7 @@ impl RecordingService {
         info!(meeting = %meeting.id, duration_ms = meeting.duration_ms, "recording stopped");
         Ok(Stopped {
             meeting,
+            tracks,
             problems,
             peaks,
         })

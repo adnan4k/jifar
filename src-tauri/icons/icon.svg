@@ -1,10 +1,14 @@
+<!-- Jifar app icon: the sidebar logo (Lucide "audio-lines", 24-unit grid,
+     stroke 2, round caps) in the accent violet on the panel color. The PNGs
+     next to this file are rendered from the same geometry. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <rect width="1024" height="1024" rx="224" fill="#16161d"/>
-  <g fill="#7c5cff">
-    <rect x="232" y="432" width="64" height="160" rx="32"/>
-    <rect x="352" y="332" width="64" height="360" rx="32"/>
-    <rect x="472" y="232" width="64" height="560" rx="32"/>
-    <rect x="592" y="352" width="64" height="320" rx="32"/>
-    <rect x="712" y="452" width="64" height="120" rx="32"/>
+  <g transform="translate(192 192) scale(26.6667)" fill="none" stroke="#7c5cff" stroke-width="2" stroke-linecap="round">
+    <path d="M2 10v3"/>
+    <path d="M6 6v11"/>
+    <path d="M10 3v18"/>
+    <path d="M14 8v7"/>
+    <path d="M18 5v13"/>
+    <path d="M22 10v3"/>
   </g>
 </svg>

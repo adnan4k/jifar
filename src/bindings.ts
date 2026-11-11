@@ -31,6 +31,11 @@ export const commands = {
 	providerKeyDelete: (provider: ProviderId) => typedError<ProviderKeyStatus_Serialize, AppError>(__TAURI_INVOKE("provider_key_delete", { provider })),
 	/**  Checks the saved key with the provider (free; shows the balance). */
 	providerKeyTest: (provider: ProviderId) => typedError<ProviderKeyTest_Serialize, AppError>(__TAURI_INVOKE("provider_key_test", { provider })),
+	/**
+	 *  Re-runs a meeting's unfinished transcription (after fixing the key or
+	 *  balance, or back online). Finished chunks are not sent again.
+	 */
+	queueRetry: (meetingId: string) => typedError<null, AppError>(__TAURI_INVOKE("queue_retry", { meetingId })),
 };
 
 /** Events */
@@ -39,6 +44,8 @@ export const events = {
 	audioLevels: makeEvent<AudioLevels_Serialize, AudioLevels_Deserialize>("audio://levels"),
 	audioSilent: makeEvent<AudioSilent_Serialize, AudioSilent_Deserialize>("audio://silent"),
 	meetingStatus: makeEvent<MeetingStatusChanged, MeetingStatusChanged>("meeting://status"),
+	transcriptProgress: makeEvent<TranscriptProgress_Serialize, TranscriptProgress_Deserialize>("transcript://progress"),
+	transcriptSegments: makeEvent<TranscriptSegments, TranscriptSegments>("transcript://segments"),
 };
 
 /* Types */
@@ -123,6 +130,12 @@ export type AudioSilent_Serialize = {
 	track: TrackDto,
 	sinceMs: number | null,
 };
+
+export type BlockedReason = 
+/**  No API key, or it was rejected. */
+"auth" | 
+/**  Balance too low. */
+"credits";
 
 export type DeviceList = {
 	inputs: AudioDeviceDto[],
@@ -240,6 +253,17 @@ export type RecordingStopped = {
 	peaks: (number | null)[],
 };
 
+/**  One transcribed segment, on the recording clock. */
+export type SegmentDto = {
+	/**  Stable within the meeting: `<track>-<chunk>-<n>`. */
+	id: string,
+	track: TrackDto,
+	startMs: number | null,
+	endMs: number | null,
+	/**  Exactly as transcribed (Qubee apostrophes intact). */
+	text: string,
+};
+
 export type Settings = Settings_Serialize | Settings_Deserialize;
 
 export type Settings_Deserialize = {
@@ -255,6 +279,48 @@ export type Settings_Serialize = {
 };
 
 export type TrackDto = "mic" | "system";
+
+/**
+ *  Transcription progress for a meeting. `blocked` means it is paused until
+ *  the user fixes the key or balance and calls `queue_retry`.
+ */
+export type TranscriptProgress = TranscriptProgress_Serialize | TranscriptProgress_Deserialize;
+
+/**
+ *  Transcription progress for a meeting. `blocked` means it is paused until
+ *  the user fixes the key or balance and calls `queue_retry`.
+ */
+export type TranscriptProgress_Deserialize = {
+	meetingId: string,
+	done: number,
+	failed: number,
+	total: number,
+	finished: boolean,
+	blocked?: BlockedReason | null,
+	/**  Why it is blocked, or why it couldn't start. */
+	message?: string | null,
+};
+
+/**
+ *  Transcription progress for a meeting. `blocked` means it is paused until
+ *  the user fixes the key or balance and calls `queue_retry`.
+ */
+export type TranscriptProgress_Serialize = {
+	meetingId: string,
+	done: number,
+	failed: number,
+	total: number,
+	finished: boolean,
+	blocked: BlockedReason | null,
+	/**  Why it is blocked, or why it couldn't start. */
+	message: string | null,
+};
+
+/**  Segments from one finished chunk. */
+export type TranscriptSegments = {
+	meetingId: string,
+	segments: SegmentDto[],
+};
 
 /* Tauri Specta runtime */
 async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {

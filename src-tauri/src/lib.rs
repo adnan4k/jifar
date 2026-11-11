@@ -7,6 +7,7 @@ mod dto;
 mod error;
 mod events;
 mod live;
+mod transcribe;
 mod tray;
 
 use std::path::Path;
@@ -56,12 +57,15 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::provider_key_set,
             commands::provider_key_delete,
             commands::provider_key_test,
+            commands::queue_retry,
         ])
         .events(collect_events![
             events::AudioLevels,
             events::AudioSilent,
             events::MeetingStatusChanged,
             events::AppErrorEvent,
+            events::TranscriptSegments,
+            events::TranscriptProgress,
         ])
 }
 
@@ -107,6 +111,7 @@ pub fn run() -> anyhow::Result<()> {
         .register_asynchronous_uri_scheme_protocol(audio_scheme::SCHEME, audio_scheme::handle)
         .setup(move |app| {
             builder.mount_events(app);
+            app.manage(transcribe::service(app.handle())?);
             // Without a tray there would be no indicator outside the window;
             // recording still works, but say so loudly.
             let tray = match tray::Tray::build(app.handle()) {

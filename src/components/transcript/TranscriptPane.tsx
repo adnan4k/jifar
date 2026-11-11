@@ -9,7 +9,9 @@ import {
   Settings,
 } from "lucide-react";
 import { type Ref, useEffect, useRef, useState } from "react";
+import { commands } from "@/bindings";
 import { Button } from "@/components/ui/button";
+import { call } from "@/lib/native";
 import { useMeeting, useRetryQueue } from "@/lib/queries";
 import type { MeetingDetail, Segment } from "@/lib/types";
 import { cn, formatTimestamp } from "@/lib/utils";
@@ -55,7 +57,7 @@ function EmptyState() {
 
 function MeetingBody({ meeting }: { meeting: MeetingDetail }) {
   if (meeting.status === "recording") return <RecordingPlaceholder />;
-  if (meeting.recorded) return <RecordedPanel meeting={meeting} />;
+  if (meeting.recorded) return <RecordedMeeting meeting={meeting} />;
 
   return (
     <>
@@ -64,6 +66,133 @@ function MeetingBody({ meeting }: { meeting: MeetingDetail }) {
       <SegmentList meeting={meeting} />
       {meeting.status !== "processing" && <PlayerBar durationMs={meeting.durationMs} />}
     </>
+  );
+}
+
+// A real recording from the core: live transcription progress, the
+// transcript as it arrives, and the real audio player at the bottom.
+function RecordedMeeting({ meeting }: { meeting: MeetingDetail }) {
+  const t = meeting.recorded?.transcription;
+  const hasText = meeting.segments.length > 0;
+  return (
+    <>
+      <TranscriptionStatus meeting={meeting} />
+      {hasText ? <SegmentList meeting={meeting} /> : <RecordedEmpty meeting={meeting} />}
+      <div className="shrink-0 border-t bg-panel px-6 py-3">
+        <RecordingPlayer
+          key={meeting.id}
+          meetingId={meeting.id}
+          durationMs={meeting.durationMs}
+          peaks={meeting.recorded?.peaks}
+          compact={hasText || !!t}
+        />
+      </div>
+    </>
+  );
+}
+
+function TranscriptionStatus({ meeting }: { meeting: MeetingDetail }) {
+  const t = meeting.recorded?.transcription;
+  const [retrying, setRetrying] = useState(false);
+  const retry = () => {
+    setRetrying(true);
+    call(commands.queueRetry(meeting.id))
+      .catch(() => {})
+      .finally(() => setRetrying(false));
+  };
+  const openSettings = () => useUi.getState().setSettingsOpen(true);
+
+  if (t?.blocked) {
+    const text =
+      t.blocked === "credits"
+        ? "Transcription is paused: your Addis AI balance is too low. Top up, then retry."
+        : "Transcription is paused: add a working Addis Scribe API key in Settings, then retry.";
+    return (
+      <div className="flex items-center gap-3 border-b bg-warn/10 px-6 py-3 text-sm">
+        <AlertTriangle className="size-4 shrink-0 text-warn" />
+        <span className="flex-1">{text}</span>
+        <Button size="sm" variant="outline" onClick={openSettings}>
+          <Settings />
+          Settings
+        </Button>
+        <Button size="sm" onClick={retry} disabled={retrying}>
+          <RotateCw />
+          Retry
+        </Button>
+      </div>
+    );
+  }
+  if (t?.finished && (t.failed > 0 || (t.total === 0 && t.message))) {
+    return (
+      <div className="flex items-center gap-3 border-b bg-warn/10 px-6 py-3 text-sm">
+        <AlertTriangle className="size-4 shrink-0 text-warn" />
+        <span className="flex-1">
+          {t.message ?? `${t.failed} of ${t.total} chunks could not be transcribed.`}
+        </span>
+        {t.failed > 0 && (
+          <Button size="sm" variant="outline" onClick={retry} disabled={retrying}>
+            <RotateCw />
+            Retry
+          </Button>
+        )}
+      </div>
+    );
+  }
+  if (t && !t.finished) {
+    return (
+      <div className="border-b px-6 py-3">
+        <div className="mb-2 flex items-center gap-2 text-sm">
+          <Loader2 className="size-4 animate-spin text-accent" />
+          {t.total === 0
+            ? "Finding speech…"
+            : `Transcribing ${t.done + t.failed} / ${t.total} chunks`}
+        </div>
+        <div className="h-1 overflow-hidden rounded-full bg-card">
+          <div
+            className="h-full bg-accent transition-[width]"
+            style={{ width: `${t.total ? ((t.done + t.failed) / t.total) * 100 : 0}%` }}
+          />
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
+function RecordedEmpty({ meeting }: { meeting: MeetingDetail }) {
+  const t = meeting.recorded?.transcription;
+  const problems = meeting.recorded?.problems ?? [];
+  const noSpeech = t?.finished && t.total === 0 && !t.message;
+  return (
+    <div className="grid min-h-0 flex-1 place-items-center overflow-y-auto p-8 text-center">
+      <div className="w-full max-w-md space-y-3">
+        <div className="mx-auto grid size-14 place-items-center rounded-full bg-accent-soft">
+          {problems.length ? (
+            <AlertTriangle className="size-6 text-warn" />
+          ) : (
+            <CheckCircle2 className="size-6 text-accent" />
+          )}
+        </div>
+        <h2 className="text-lg font-medium">{noSpeech ? "No speech found" : "Recording saved"}</h2>
+        <p className="text-sm text-muted">
+          {noSpeech
+            ? "Nothing in this recording sounded like speech, so nothing was sent for transcription."
+            : `${formatTimestamp(meeting.durationMs)} of audio, recorded on this computer. The transcript appears here as it is ready.`}
+        </p>
+        {meeting.recorded?.dir && (
+          <p className="break-all rounded-lg bg-card px-3 py-2 font-mono text-xs text-muted">
+            {meeting.recorded.dir}
+          </p>
+        )}
+        {problems.length > 0 && (
+          <ul className="space-y-1 text-left text-sm text-warn">
+            {problems.map((p) => (
+              <li key={p}>• {p}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -83,48 +212,6 @@ function RecordingPlaceholder() {
           <LevelMeter label="Me" value={levels.mic} />
           <LevelMeter label="Others" value={levels.system} />
         </div>
-      </div>
-    </div>
-  );
-}
-
-// A real recording from the core. Transcription isn't wired yet (M2/M3), so
-// show what was saved instead of a fake transcript.
-function RecordedPanel({ meeting }: { meeting: MeetingDetail }) {
-  const problems = meeting.recorded?.problems ?? [];
-  return (
-    <div className="grid flex-1 place-items-center p-8 text-center">
-      <div className="w-full max-w-xl space-y-4">
-        <div className="mx-auto grid size-14 place-items-center rounded-full bg-accent-soft">
-          {problems.length ? (
-            <AlertTriangle className="size-6 text-warn" />
-          ) : (
-            <CheckCircle2 className="size-6 text-accent" />
-          )}
-        </div>
-        <h2 className="text-lg font-medium">Recording saved</h2>
-        <p className="text-sm text-muted">
-          {formatTimestamp(meeting.durationMs)} of audio, recorded on this computer. Transcription
-          is not connected yet; it arrives with the transcription milestone.
-        </p>
-        <RecordingPlayer
-          key={meeting.id}
-          meetingId={meeting.id}
-          durationMs={meeting.durationMs}
-          peaks={meeting.recorded?.peaks}
-        />
-        {meeting.recorded?.dir && (
-          <p className="break-all rounded-lg bg-card px-3 py-2 font-mono text-xs text-muted">
-            {meeting.recorded.dir}
-          </p>
-        )}
-        {problems.length > 0 && (
-          <ul className="space-y-1 text-left text-sm text-warn">
-            {problems.map((p) => (
-              <li key={p}>• {p}</li>
-            ))}
-          </ul>
-        )}
       </div>
     </div>
   );

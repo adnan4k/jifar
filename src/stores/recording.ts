@@ -263,7 +263,12 @@ export function connectRecording(): () => void {
         );
         useUi.getState().selectMeeting(payload.meetingId);
         store.setState({ phase: "recording", meetingId: payload.meetingId, history: flat() });
-      } else if (payload.status !== "recording" && st.meetingId === payload.meetingId && !st.busy) {
+      } else if (payload.status === "ready" || payload.status === "needs_attention") {
+        // Transcription finished (or couldn't run).
+        if (st.meetingId !== payload.meetingId)
+          backend.updateRecorded(payload.meetingId, { status: payload.status });
+      }
+      if (payload.status !== "recording" && st.meetingId === payload.meetingId && !st.busy) {
         // Stopped from the tray.
         const m = { id: payload.meetingId, status: payload.status };
         backend
@@ -284,6 +289,39 @@ export function connectRecording(): () => void {
         });
       }
     }),
+  );
+
+  // Post-stop transcription (in the app, segments come from the core).
+  unlisten.push(
+    events.transcriptSegments.listen(({ payload }) =>
+      backend.appendSegments(
+        payload.meetingId,
+        payload.segments.map((s) => ({
+          id: `${payload.meetingId}-${s.id}`,
+          meetingId: payload.meetingId,
+          track: s.track,
+          speaker: null,
+          startMs: s.startMs ?? 0,
+          endMs: s.endMs ?? 0,
+          text: s.text,
+          edited: false,
+        })),
+      ),
+    ),
+  );
+  unlisten.push(
+    events.transcriptProgress.listen(({ payload }) =>
+      backend.updateRecorded(payload.meetingId, {
+        transcription: {
+          done: payload.done,
+          failed: payload.failed,
+          total: payload.total,
+          finished: payload.finished,
+          blocked: payload.blocked ?? null,
+          message: payload.message ?? null,
+        },
+      }),
+    ),
   );
 
   unlisten.push(

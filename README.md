@@ -55,6 +55,7 @@ export ORT_DYLIB_PATH=$(scripts/fetch-onnxruntime.sh)
 ```bash
 pnpm install
 pnpm tauri dev      # desktop app (Rust core + UI)
+scripts/dev-desktop-entry.sh   # once: show the Jifar icon in the GNOME dock for dev builds
 pnpm dev            # UI only in a browser at http://localhost:1420, with mock data
 ```
 
