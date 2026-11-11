@@ -184,7 +184,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => println!("  {:<6} {}: ERROR {e}", t.track.as_str(), t.path.display()),
         }
     }
-    if !summary.is_clean() {
+    if summary.needs_attention() {
+        println!("\nneeds attention:");
+        for p in summary.problems() {
+            println!("  - {p}");
+        }
         std::process::exit(1);
     }
     Ok(())
@@ -213,7 +217,8 @@ fn print_status(status: &SessionStatus) {
             println!("    {}: source error: {err}", t.track.as_str());
         }
         if !t.healthy {
-            println!("    {}: encoder worker stopped", t.track.as_str());
+            let why = t.fault.as_deref().unwrap_or("unknown reason");
+            println!("    {}: encoder worker stopped: {why}", t.track.as_str());
         }
     }
 }

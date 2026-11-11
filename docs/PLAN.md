@@ -71,7 +71,7 @@ Goal: record mic and system audio to separate, aligned, crash-safe Opus tracks f
 - [x] Per-track levels (~10 Hz) and silence detection (> 30 s). **FR-REC-08** (`LevelMeter` on the worker after drift correction: `TrackStatus::level` (RMS/peak dBFS per 100 ms), `silent_ms`, `silence_warning()`, `SessionStatus::silent_tracks()`. Metering the corrected stream makes a dead device read as silent. The `audio://levels` event itself is M3.)
 - [x] Pause/resume that keeps the timeline consistent. **FR-REC-09** (`RecordingSession::pause/resume`: paused audio is discarded in `RtSink::push` (one atomic check), the clock and drift measurement run on recording time, `SessionSummary::pauses` lists the cuts. Per-track cut differences are absorbed by drift correction, so pauses never accumulate misalignment or count as stalls. `record --pause AT:LEN`.)
 - [ ] Device enumeration and selection. **FR-REC-07**
-- [ ] Worker panic handling: catch the panic, finalize what's on disk, report `needs_attention`.
+- [x] Worker panic handling: catch the panic, finalize what's on disk, report `needs_attention`. (`run_worker` wraps the loop in `catch_unwind`; on a panic or write error it publishes the fault (`TrackStatus::fault`) and still finalizes the Ogg stream, itself guarded. `SessionSummary::needs_attention()`/`problems()` cover failed starts, worker faults and overruns; M3 maps them to the meeting status. The other track is unaffected. Release profiles must keep `panic = "unwind"`, see M5.)
 - [x] `cargo run -p jifar-audio --example record` CLI. (`<dir> [--duration SECS] [--mic-only|--system-only]`, prints overruns and drift every 5 s.)
 - [ ] **Spike:** `webrtc-audio-processing` AEC on mic vs. system. Measure the bleed reduction to answer **OQ-4**. Full integration can land in M3/M4. **FR-REC-10**
 
@@ -136,6 +136,7 @@ Goal: turn transcripts into useful notes, and make history searchable and export
 
 ### M5 — Packaging & release (M)
 
+- [ ] Keep `panic = "unwind"` in release profiles: audio worker panic recovery relies on it.
 - [ ] `.deb` and AppImage from the Tauri bundler. Declare runtime dependencies (PipeWire/PulseAudio, WebKitGTK 4.1, GStreamer plugins needed for playback). **NFR-01**
 - [ ] Clean-VM install tests on 22.04 and 24.04 (scripted where possible).
 - [ ] First-run flow: device check (records 3 s from each track and shows levels), provider key setup, privacy explanation, consent reminder if OQ-5 decides one.

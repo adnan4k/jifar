@@ -82,6 +82,9 @@ pub struct TrackStatus {
     pub silent_ms: u64,
     /// False if the encoder worker stopped early.
     pub healthy: bool,
+    /// Why the worker stopped early (panic or write error). The file keeps
+    /// everything recorded before it.
+    pub fault: Option<String>,
     /// Fault reported by the capture source.
     pub source_error: Option<String>,
 }
@@ -173,6 +176,34 @@ impl SessionSummary {
     /// True if every requested track started and finalized cleanly.
     pub fn is_clean(&self) -> bool {
         self.failed_to_start.is_empty() && self.tracks.iter().all(|t| t.outcome.is_ok())
+    }
+
+    /// The meeting should be marked `needs_attention` (SPEC §6.4): a track
+    /// failed to start, its worker failed, or audio was lost to overruns.
+    /// Whatever was recorded is still on disk and gets processed.
+    pub fn needs_attention(&self) -> bool {
+        !self.problems().is_empty()
+    }
+
+    /// Human-readable reasons behind [`Self::needs_attention`].
+    pub fn problems(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .failed_to_start
+            .iter()
+            .map(|(t, e)| format!("{} did not start: {e}", t.as_str()))
+            .collect();
+        for t in &self.tracks {
+            match &t.outcome {
+                Err(e) => out.push(format!("{}: {e}", t.track.as_str())),
+                Ok(s) if s.overrun_samples > 0 => out.push(format!(
+                    "{}: {} ms of audio lost to overruns",
+                    t.track.as_str(),
+                    s.overrun_samples * 1000 / u64::from(SAMPLE_RATE)
+                )),
+                Ok(_) => {}
+            }
+        }
+        out
     }
 }
 
@@ -322,6 +353,7 @@ impl RecordingSession {
                     level: t.recorder.level(),
                     silent_ms: t.recorder.silent_ms(),
                     healthy: t.recorder.is_healthy(),
+                    fault: t.recorder.fault(),
                     source_error: t.recorder.source_error(),
                 }
             })
@@ -385,5 +417,104 @@ fn signed_ms(from: Instant, to: Instant) -> i64 {
     match to.checked_duration_since(from) {
         Some(d) => i64::try_from(d.as_millis()).unwrap_or(i64::MAX),
         None => -i64::try_from(from.duration_since(to).as_millis()).unwrap_or(i64::MAX),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+    use std::thread;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::recorder::PANIC_SENTINEL_BITS;
+    use crate::{FakeSource, OggOpusReader, Pacing};
+
+    fn tone(secs: f32) -> Vec<f32> {
+        (0..(secs * SAMPLE_RATE as f32) as usize)
+            .map(|i| 0.3 * (i as f32 * 0.05).sin())
+            .collect()
+    }
+
+    #[test]
+    fn worker_panic_keeps_the_file_and_flags_the_meeting() {
+        let dir = tempfile::tempdir().unwrap();
+        // The mic worker panics 1 s in; the system track is fine.
+        let mut mic = tone(2.0);
+        mic[SAMPLE_RATE as usize] = f32::from_bits(PANIC_SENTINEL_BITS);
+        let session = RecordingSession::start(
+            dir.path(),
+            vec![
+                (
+                    Track::Mic,
+                    Box::new(FakeSource::from_samples("mic", mic, Pacing::Realtime))
+                        as Box<dyn CaptureSource>,
+                ),
+                (
+                    Track::System,
+                    Box::new(FakeSource::from_samples(
+                        "system",
+                        tone(2.0),
+                        Pacing::Realtime,
+                    )),
+                ),
+            ],
+        )
+        .unwrap();
+        thread::sleep(Duration::from_millis(1_600));
+        let st = session.status();
+        let mic_status = st.track(Track::Mic).unwrap();
+        assert!(!mic_status.healthy);
+        assert!(
+            mic_status
+                .fault
+                .as_deref()
+                .unwrap()
+                .contains("injected test panic"),
+            "{:?}",
+            mic_status.fault
+        );
+        assert!(st.track(Track::System).unwrap().healthy);
+        thread::sleep(Duration::from_millis(600));
+        let summary = session.stop();
+
+        assert!(summary.needs_attention());
+        let problems = summary.problems();
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].starts_with("mic:"), "{problems:?}");
+        assert!(problems[0].contains("file finalized"), "{problems:?}");
+
+        // The mic file is complete up to the panic and properly finalized.
+        let mut reader =
+            OggOpusReader::new(File::open(dir.path().join("mic.opus")).unwrap()).unwrap();
+        let decoded = reader.read_to_end().unwrap();
+        assert!(!reader.is_truncated(), "mic.opus should be finalized");
+        let ms = decoded.len() * 1000 / SAMPLE_RATE as usize;
+        assert!((900..=1_100).contains(&ms), "kept {ms} ms");
+
+        // The other track is unaffected.
+        let system = summary
+            .tracks
+            .iter()
+            .find(|t| t.track == Track::System)
+            .unwrap();
+        assert!(system.outcome.is_ok());
+    }
+
+    #[test]
+    fn clean_session_needs_no_attention() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = RecordingSession::start(
+            dir.path(),
+            vec![(
+                Track::Mic,
+                Box::new(FakeSource::from_samples("mic", tone(0.3), Pacing::Lossless))
+                    as Box<dyn CaptureSource>,
+            )],
+        )
+        .unwrap();
+        thread::sleep(Duration::from_millis(200));
+        let summary = session.stop();
+        assert!(!summary.needs_attention(), "{:?}", summary.problems());
     }
 }

@@ -2,13 +2,15 @@
 //! drift correction → level meter → incremental Ogg/Opus file. One instance
 //! per track (`mic`, `system`).
 
+use std::any::Any;
+use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::drift::DriftCorrector;
 use crate::level::{Level, LevelMeter, LevelShared};
@@ -54,6 +56,7 @@ pub struct TrackRecorder {
     samples: Arc<AtomicU64>,
     drift: Arc<DriftCounters>,
     levels: Arc<LevelShared>,
+    fault: Arc<OnceLock<String>>,
     stats: CaptureStats,
 }
 
@@ -79,6 +82,7 @@ impl TrackRecorder {
         let samples = Arc::new(AtomicU64::new(0));
         let drift = Arc::new(DriftCounters::default());
         let levels = Arc::new(LevelShared::default());
+        let fault = Arc::new(OnceLock::new());
 
         let worker = {
             let ctx = WorkerCtx {
@@ -86,6 +90,7 @@ impl TrackRecorder {
                 samples: Arc::clone(&samples),
                 drift: Arc::clone(&drift),
                 levels: Arc::clone(&levels),
+                fault: Arc::clone(&fault),
                 stats: stats.clone(),
             };
             thread::Builder::new()
@@ -109,8 +114,16 @@ impl TrackRecorder {
             samples,
             drift,
             levels,
+            fault,
             stats,
         })
+    }
+
+    /// Why the encoder worker stopped early (panic or write error), if it
+    /// did. Capture continues but nothing more is written; the file holds
+    /// everything up to the fault and is finalized if possible.
+    pub fn fault(&self) -> Option<String> {
+        self.fault.get().cloned()
     }
 
     /// Level of the last 100 ms written (FR-REC-08). `None` until the first
@@ -177,7 +190,11 @@ impl TrackRecorder {
         self.stop.store(true, Ordering::Release);
         let samples = match self.worker.take().map(JoinHandle::join) {
             Some(Ok(result)) => result?,
-            Some(Err(_)) => return Err(AudioError::WorkerPanicked),
+            // `run_worker` catches panics itself; this is a panic that
+            // escaped even that (e.g. while finalizing).
+            Some(Err(payload)) => {
+                return Err(AudioError::WorkerPanicked(panic_message(&*payload)));
+            }
             None => self.samples_written(),
         };
         source_result?;
@@ -215,19 +232,95 @@ struct WorkerCtx {
     samples: Arc<AtomicU64>,
     drift: Arc<DriftCounters>,
     levels: Arc<LevelShared>,
+    fault: Arc<OnceLock<String>>,
     stats: CaptureStats,
 }
 
+/// Runs the encoder loop. A panic or write error in the loop is caught, the
+/// fault is published, and the file is still finalized when possible, so a
+/// bug costs at most the audio after it, never the recording so far.
 fn run_worker(
     mut reader: RingReader,
     mut writer: OggOpusWriter<DurableFile>,
     mut corrector: Option<DriftCorrector>,
     ctx: &WorkerCtx,
 ) -> Result<u64> {
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+        pump(&mut reader, &mut writer, &mut corrector, ctx)
+    }));
+    let fault = match outcome {
+        Ok(Ok(())) => None,
+        Ok(Err(e)) => Some(e),
+        Err(payload) => Some(AudioError::WorkerPanicked(panic_message(&*payload))),
+    };
+    if let Some(e) = &fault {
+        error!(error = %e, "audio worker failed; finalizing what was recorded");
+        let _ = ctx.fault.set(e.to_string());
+    }
+
+    let total = writer.samples_written();
+    // The writer may be mid-page after a panic; finalizing must not panic
+    // the thread again.
+    let finalized = panic::catch_unwind(AssertUnwindSafe(|| {
+        writer.finish()?.close().map_err(AudioError::from)
+    }));
+    match (fault, finalized) {
+        (None, Ok(Ok(()))) => {
+            debug!(total, "audio worker finished");
+            Ok(total)
+        }
+        (None, Ok(Err(e))) => Err(e),
+        (None, Err(payload)) => Err(AudioError::WorkerPanicked(format!(
+            "while finalizing: {}",
+            panic_message(&*payload)
+        ))),
+        (Some(e), Ok(Ok(()))) => {
+            warn!(total, "file finalized after worker fault");
+            Err(match e {
+                AudioError::WorkerPanicked(m) => {
+                    AudioError::WorkerPanicked(format!("{m} (file finalized)"))
+                }
+                other => other,
+            })
+        }
+        (Some(e), _) => {
+            warn!("file could not be finalized; it decodes up to the last flushed page");
+            Err(match e {
+                AudioError::WorkerPanicked(m) => AudioError::WorkerPanicked(format!(
+                    "{m} (file not finalized; readable up to the last page)"
+                )),
+                other => other,
+            })
+        }
+    }
+}
+
+fn panic_message(payload: &(dyn Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".to_owned())
+}
+
+/// Test-only: a sample with exactly these bits makes the worker panic.
+#[cfg(test)]
+pub(crate) const PANIC_SENTINEL_BITS: u32 = 0x7fc0_dead;
+
+fn pump(
+    reader: &mut RingReader,
+    writer: &mut OggOpusWriter<DurableFile>,
+    corrector: &mut Option<DriftCorrector>,
+    ctx: &WorkerCtx,
+) -> Result<()> {
     let mut buf = vec![0.0_f32; READ_BUF];
     let mut next_drift_check = Instant::now() + DRIFT_INTERVAL;
     let mut meter = LevelMeter::new(Arc::clone(&ctx.levels));
     let mut write = |block: &[f32]| -> Result<()> {
+        #[cfg(test)]
+        if block.iter().any(|s| s.to_bits() == PANIC_SENTINEL_BITS) {
+            panic!("injected test panic");
+        }
         meter.feed(block);
         writer.write_samples(block)?;
         ctx.samples
@@ -268,10 +361,7 @@ fn run_worker(
         c.flush(&mut write)?;
         publish_drift(c, &ctx.drift);
     }
-    let total = writer.samples_written();
-    writer.finish()?.close()?;
-    debug!(total, "audio worker finished");
-    Ok(total)
+    Ok(())
 }
 
 /// Ogg stream serial derived from the path, so `mic.opus` and `system.opus`

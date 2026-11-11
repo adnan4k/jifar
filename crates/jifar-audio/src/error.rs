@@ -17,8 +17,10 @@ pub enum AudioError {
     Source(String),
     #[error("capture source is already running")]
     AlreadyRunning,
-    #[error("audio worker thread panicked")]
-    WorkerPanicked,
+    /// The encoder worker panicked. The message says what panicked and
+    /// whether the file could still be finalized.
+    #[error("audio worker panicked: {0}")]
+    WorkerPanicked(String),
     #[error("invalid recording session: {0}")]
     InvalidSession(String),
     #[error("resampler error: {0}")]
