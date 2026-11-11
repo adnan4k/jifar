@@ -189,6 +189,78 @@ pub async fn queue_retry(
     })
 }
 
+/// Saved meetings, newest first (FR-HIS-01). `query` matches titles and
+/// transcript words (FR-HIS-02 basics).
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_list(
+    state: State<'_, AppState>,
+    query: Option<String>,
+    limit: Option<u32>,
+) -> Result<Vec<crate::dto::Meeting>, AppError> {
+    let lib = state.library.clone();
+    let limit = limit.unwrap_or(200).min(1000);
+    blocking(move || {
+        Ok(lib
+            .list(query.as_deref(), limit)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    })
+    .await
+}
+
+/// One meeting with its transcript and waveform (FR-HIS-03).
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_get(
+    state: State<'_, AppState>,
+    meeting_id: String,
+) -> Result<crate::dto::MeetingDetailDto, AppError> {
+    let lib = state.library.clone();
+    blocking(move || {
+        lib.get(&meeting_id)?.map(Into::into).ok_or_else(|| {
+            AppError::new(
+                ErrorCode::MeetingNotFound,
+                format!("meeting {meeting_id} not found"),
+            )
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_rename(
+    state: State<'_, AppState>,
+    meeting_id: String,
+    title: String,
+) -> Result<(), AppError> {
+    let lib = state.library.clone();
+    blocking(move || Ok(lib.rename(&meeting_id, &title)?)).await
+}
+
+/// Deletes a meeting and its audio (FR-HIS-04). The UI confirms first.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_delete(
+    state: State<'_, AppState>,
+    meeting_id: String,
+) -> Result<(), AppError> {
+    if state
+        .recording
+        .live()
+        .is_some_and(|l| l.meeting_id == meeting_id)
+    {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "stop the recording before deleting it",
+        ));
+    }
+    let lib = state.library.clone();
+    blocking(move || Ok(lib.delete(&meeting_id)?)).await
+}
+
 pub(crate) fn notify(app: &AppHandle, meeting: &crate::dto::Meeting) {
     let _ = MeetingStatusChanged {
         meeting_id: meeting.id.clone(),

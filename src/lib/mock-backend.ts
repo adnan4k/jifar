@@ -15,7 +15,6 @@ import type {
   MeetingSummary,
   Segment,
   Track,
-  TranscriptionState,
 } from "./types";
 
 const SCRIPT: { track: Track; text: string }[] = [
@@ -241,59 +240,17 @@ export const backend = {
     return toSummary(m);
   },
 
-  /**
-   * Adds or updates a meeting recorded by the real core, so it shows in the
-   * list until the real store lands (M3). It never gets mock segments.
-   */
-  upsertRecorded(
-    m: MeetingSummary,
-    recorded: { dir: string; problems: string[]; peaks?: number[] },
-  ): void {
-    const existing = meetings.find((x) => x.id === m.id);
-    // Transcription events can beat the stop call's own update; don't move a
-    // finished meeting back to "processing".
-    if (existing?.recorded?.transcription?.finished && m.status === "processing") {
-      m = { ...m, status: existing.status };
-    }
-    if (existing) {
-      Object.assign(existing, {
-        ...m,
-        title: m.title || existing.title,
-        recorded: {
-          ...existing.recorded,
-          ...recorded,
-          dir: recorded.dir || existing.recorded?.dir || "",
-        },
-      });
-    } else {
-      meetings.push({ ...m, segments: [], notes: null, progress: { done: 0, total: 0 }, recorded });
-    }
+  async meetingRename(id: string, title: string): Promise<null> {
+    find(id).title = title.trim();
     emit();
+    return null;
   },
 
-  /** Adds segments from the core's `transcript://segments`, in time order. */
-  appendSegments(id: string, segments: Segment[]): void {
-    const m = meetings.find((x) => x.id === id);
-    if (!m) return;
-    const known = new Set(m.segments.map((s) => s.id));
-    m.segments.push(...segments.filter((s) => !known.has(s.id)));
-    m.segments.sort((a, b) => a.startMs - b.startMs || (a.track === "mic" ? -1 : 1));
+  async meetingDelete(id: string): Promise<null> {
+    const i = meetings.findIndex((m) => m.id === id);
+    if (i >= 0) meetings.splice(i, 1);
     emit();
-  },
-
-  /** Applies `transcript://progress` and `meeting://status` from the core. */
-  updateRecorded(
-    id: string,
-    patch: { status?: MeetingSummary["status"]; transcription?: TranscriptionState },
-  ): void {
-    const m = meetings.find((x) => x.id === id);
-    if (!m?.recorded) return;
-    if (patch.status) m.status = patch.status;
-    if (patch.transcription) {
-      m.recorded.transcription = patch.transcription;
-      m.progress = { done: patch.transcription.done, total: patch.transcription.total };
-    }
-    emit();
+    return null;
   },
 
   async queueRetry(id: string): Promise<void> {

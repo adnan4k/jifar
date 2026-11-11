@@ -49,11 +49,10 @@ export interface MeetingDetail extends MeetingSummary {
     dir: string;
     problems: string[];
     peaks?: number[];
-    /** Post-stop transcription state (events from the core). */
-    transcription?: TranscriptionState;
   };
 }
 
+/** Live post-stop transcription progress (events from the core). */
 export interface TranscriptionState {
   done: number;
   failed: number;

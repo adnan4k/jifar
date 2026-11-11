@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use jifar_core::recording::{MeetingStatus, Stopped};
-use jifar_core::transcription::{Track, TranscriptEvent, TranscriptionService, silero_vad};
+use jifar_core::transcription::{
+    Track, TranscriptEvent, TranscriptionService, segment_id, silero_vad,
+};
 use jifar_providers::{ActionKind, AddisScribe, AsrProvider, KeyringStore};
 use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
@@ -15,13 +17,17 @@ use crate::events::{
 };
 
 /// Builds the service with Addis Scribe (key from the keyring) and Silero.
-pub fn service(app: &AppHandle) -> Result<TranscriptionService, jifar_providers::ProviderError> {
+pub fn service(
+    app: &AppHandle,
+    library: jifar_core::library::Library,
+) -> Result<TranscriptionService, jifar_providers::ProviderError> {
     let provider: Arc<dyn AsrProvider> = Arc::new(AddisScribe::new(Box::new(KeyringStore))?);
     let app = app.clone();
     Ok(TranscriptionService::new(
         provider,
         silero_vad(),
         Arc::new(move |event| forward(&app, event)),
+        library,
     ))
 }
 
@@ -83,7 +89,7 @@ fn forward(app: &AppHandle, event: TranscriptEvent) {
                 .into_iter()
                 .enumerate()
                 .map(|(i, s)| SegmentDto {
-                    id: format!("{}-{chunk_index:04}-{i}", t.as_str()),
+                    id: segment_id(&meeting_id, t, chunk_index, i),
                     track: track(t),
                     start_ms: s.start_ms as f64,
                     end_ms: s.end_ms as f64,

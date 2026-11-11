@@ -1,9 +1,10 @@
 import { create } from "zustand";
-import { commands, events, type Meeting, type Settings_Serialize } from "@/bindings";
+import { commands, events, type Settings_Serialize } from "@/bindings";
 import { backend } from "@/lib/mock-backend";
 import { call, describeError } from "@/lib/native";
 import { isTauri } from "@/lib/platform";
-import type { MeetingSummary } from "@/lib/types";
+import { queryClient } from "@/lib/queryClient";
+import { useTranscriptionStore } from "./transcription";
 import { useUi } from "./ui";
 
 // Recording session state. In the app it drives the real Rust core and
@@ -44,15 +45,10 @@ export const meterFromDbfs = (db: number | null | undefined): number =>
 const defaultTitle = () =>
   `Meeting ${new Date().toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`;
 
-function toSummary(m: Meeting): MeetingSummary {
-  return {
-    id: m.id,
-    title: m.title,
-    language: m.language,
-    status: m.status,
-    startedAt: m.startedAt ?? Date.now(),
-    durationMs: m.durationMs ?? 0,
-  };
+/** Refetches the meeting list and, if given, one meeting. */
+function refresh(meetingId?: string) {
+  void queryClient.invalidateQueries({ queryKey: ["meetings"] });
+  if (meetingId) void queryClient.invalidateQueries({ queryKey: ["meeting", meetingId] });
 }
 
 let settings: Settings_Serialize = { micDevice: null, sinkDevice: null, language: "om" };
@@ -140,7 +136,7 @@ export const useRecording = create<RecordingState>((set, get) => {
             sinkDevice: settings.sinkDevice,
           }),
         );
-        backend.upsertRecorded(toSummary(res.meeting), { dir: res.meeting.dir, problems: [] });
+        refresh(res.meeting.id);
         useUi.getState().selectMeeting(res.meeting.id);
         set({
           phase: "recording",
@@ -197,11 +193,7 @@ export const useRecording = create<RecordingState>((set, get) => {
       set({ busy: true });
       try {
         const res = await call(commands.recordingStop(meetingId));
-        backend.upsertRecorded(toSummary(res.meeting), {
-          dir: res.meeting.dir,
-          problems: res.problems,
-          peaks: res.peaks.map((p) => p ?? 0),
-        });
+        refresh(res.meeting.id);
         reset();
         if (res.problems.length) set({ notice: res.problems.join(" ") });
       } catch (e) {
@@ -248,38 +240,13 @@ export function connectRecording(): () => void {
   unlisten.push(
     events.meetingStatus.listen(({ payload }) => {
       const st = store.getState();
+      refresh(payload.meetingId);
       if (payload.status === "recording" && st.meetingId !== payload.meetingId) {
         // Started from the tray: show it like one started here.
-        backend.upsertRecorded(
-          {
-            id: payload.meetingId,
-            title: "",
-            language: settings.language,
-            status: "recording",
-            startedAt: Date.now(),
-            durationMs: 0,
-          },
-          { dir: "", problems: [] },
-        );
         useUi.getState().selectMeeting(payload.meetingId);
         store.setState({ phase: "recording", meetingId: payload.meetingId, history: flat() });
-      } else if (payload.status === "ready" || payload.status === "needs_attention") {
-        // Transcription finished (or couldn't run).
-        if (st.meetingId !== payload.meetingId)
-          backend.updateRecorded(payload.meetingId, { status: payload.status });
-      }
-      if (payload.status !== "recording" && st.meetingId === payload.meetingId && !st.busy) {
+      } else if (payload.status !== "recording" && st.meetingId === payload.meetingId && !st.busy) {
         // Stopped from the tray.
-        const m = { id: payload.meetingId, status: payload.status };
-        backend
-          .meetingGet(m.id)
-          .then((d) =>
-            backend.upsertRecorded(
-              { ...d, status: m.status, durationMs: st.elapsedMs },
-              d.recorded ?? { dir: "", problems: [] },
-            ),
-          )
-          .catch(() => {});
         store.setState({
           phase: "idle",
           meetingId: null,
@@ -291,35 +258,17 @@ export function connectRecording(): () => void {
     }),
   );
 
-  // Post-stop transcription (in the app, segments come from the core).
-  unlisten.push(
-    events.transcriptSegments.listen(({ payload }) =>
-      backend.appendSegments(
-        payload.meetingId,
-        payload.segments.map((s) => ({
-          id: `${payload.meetingId}-${s.id}`,
-          meetingId: payload.meetingId,
-          track: s.track,
-          speaker: null,
-          startMs: s.startMs ?? 0,
-          endMs: s.endMs ?? 0,
-          text: s.text,
-          edited: false,
-        })),
-      ),
-    ),
-  );
+  // Post-stop transcription: segments are saved by the core; refetch.
+  unlisten.push(events.transcriptSegments.listen(({ payload }) => refresh(payload.meetingId)));
   unlisten.push(
     events.transcriptProgress.listen(({ payload }) =>
-      backend.updateRecorded(payload.meetingId, {
-        transcription: {
-          done: payload.done,
-          failed: payload.failed,
-          total: payload.total,
-          finished: payload.finished,
-          blocked: payload.blocked ?? null,
-          message: payload.message ?? null,
-        },
+      useTranscriptionStore.getState().set(payload.meetingId, {
+        done: payload.done,
+        failed: payload.failed,
+        total: payload.total,
+        finished: payload.finished,
+        blocked: payload.blocked ?? null,
+        message: payload.message ?? null,
       }),
     ),
   );

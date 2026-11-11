@@ -14,6 +14,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::Context;
+use jifar_core::library::Library;
 use jifar_core::paths::AppPaths;
 use jifar_core::provider_keys::ProviderKeys;
 use jifar_core::recording::{RecordingService, SystemAudio};
@@ -27,6 +28,7 @@ pub use error::{AppError, ErrorCode};
 pub struct AppState {
     pub paths: AppPaths,
     pub recording: Arc<RecordingService>,
+    pub library: Library,
     pub keys: Arc<ProviderKeys>,
     settings: Mutex<Settings>,
 }
@@ -58,6 +60,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::provider_key_delete,
             commands::provider_key_test,
             commands::queue_retry,
+            commands::meetings_list,
+            commands::meeting_get,
+            commands::meeting_rename,
+            commands::meeting_delete,
         ])
         .events(collect_events![
             events::AudioLevels,
@@ -95,15 +101,25 @@ pub fn run() -> anyhow::Result<()> {
     export_bindings(Path::new(BINDINGS_PATH))?;
 
     let settings = Settings::load(&paths.settings_path());
+    let store = jifar_store::Store::open(&paths.db_path()).context("opening the database")?;
+    jifar_store::log_version(&store);
+    // A crash or kill mid-recording: those meetings need attention (their
+    // audio is on disk and can still be transcribed).
+    store
+        .recover_interrupted()
+        .context("recovering interrupted meetings")?;
+    let library = Library::new(store.clone(), paths.clone());
     let recording = Arc::new(RecordingService::new(
         paths.clone(),
         Box::new(SystemAudio::default()),
+        store,
     ));
     let builder = specta_builder();
     let app = tauri::Builder::default()
         .manage(AppState {
             paths,
             recording,
+            library: library.clone(),
             keys: Arc::new(ProviderKeys::default()),
             settings: Mutex::new(settings),
         })
@@ -111,7 +127,15 @@ pub fn run() -> anyhow::Result<()> {
         .register_asynchronous_uri_scheme_protocol(audio_scheme::SCHEME, audio_scheme::handle)
         .setup(move |app| {
             builder.mount_events(app);
-            app.manage(transcribe::service(app.handle())?);
+            let transcription = transcribe::service(app.handle(), library.clone())?;
+            // Resume transcriptions cut short by the last exit. Chunks already
+            // done are idempotent replays at the provider (not billed again).
+            if let Ok(ids) = library.store().unfinished_transcriptions() {
+                for id in ids {
+                    let _ = transcription.retry(&id);
+                }
+            }
+            app.manage(transcription);
             // Without a tray there would be no indicator outside the window;
             // recording still works, but say so loudly.
             let tray = match tray::Tray::build(app.handle()) {

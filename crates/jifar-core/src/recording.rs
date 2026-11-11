@@ -21,6 +21,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::paths::AppPaths;
+use jifar_store::{Meeting as StoredMeeting, Status as StoredStatus, Store, TrackRow};
 
 pub use jifar_audio::{AudioDevice as Device, DeviceKind};
 
@@ -169,14 +170,16 @@ struct Active {
 pub struct RecordingService {
     paths: AppPaths,
     audio: Box<dyn SourceProvider>,
+    store: Store,
     active: Mutex<Option<Active>>,
 }
 
 impl RecordingService {
-    pub fn new(paths: AppPaths, audio: Box<dyn SourceProvider>) -> Self {
+    pub fn new(paths: AppPaths, audio: Box<dyn SourceProvider>, store: Store) -> Self {
         Self {
             paths,
             audio,
+            store,
             active: Mutex::new(None),
         }
     }
@@ -260,6 +263,19 @@ impl RecordingService {
             duration_ms: 0,
             dir,
         };
+        // The database is bookkeeping: if it fails, keep recording (the
+        // files are what matters) and say so.
+        if let Err(e) = self.store.create_meeting(StoredMeeting {
+            id: meeting.id.clone(),
+            title: meeting.title.clone(),
+            language: meeting.language.clone(),
+            status: StoredStatus::Recording,
+            started_at: meeting.started_at_ms,
+            duration_ms: 0,
+        }) {
+            warn!(meeting = %meeting.id, error = %e, "could not save the meeting");
+            notices.push(format!("the meeting could not be saved to history: {e}"));
+        }
         info!(meeting = %meeting.id, notices = notices.len(), "recording started");
         *active = Some(Active {
             meeting: meeting.clone(),
@@ -326,13 +342,40 @@ impl RecordingService {
                 Vec::new()
             }
         };
-        // Waiting for transcription (queue: M3); see the module docs.
+        save_waveform(&meeting.dir, &peaks);
+        // Waiting for transcription, unless the recording itself had trouble.
         meeting.status = if problems.is_empty() {
             MeetingStatus::Processing
         } else {
             warn!(meeting = %meeting.id, ?problems, "recording needs attention");
             MeetingStatus::NeedsAttention
         };
+        let mut rows: Vec<TrackRow> = tracks
+            .iter()
+            .map(|t| TrackRow {
+                kind: t.track.as_str().to_owned(),
+                path: t.path.display().to_string(),
+                duration_ms: i64::try_from(meeting.duration_ms).unwrap_or(i64::MAX),
+                start_offset_ms: t.start_offset_ms,
+            })
+            .collect();
+        let mixed = meeting.dir.join("mixed.opus");
+        if mixed.is_file() {
+            rows.push(TrackRow {
+                kind: "mixed".into(),
+                path: mixed.display().to_string(),
+                duration_ms: i64::try_from(meeting.duration_ms).unwrap_or(i64::MAX),
+                start_offset_ms: 0,
+            });
+        }
+        if let Err(e) = self.store.finish_recording(
+            &meeting.id,
+            i64::try_from(meeting.duration_ms).unwrap_or(i64::MAX),
+            to_stored(meeting.status),
+            rows,
+        ) {
+            warn!(meeting = %meeting.id, error = %e, "could not save the finished meeting");
+        }
         info!(meeting = %meeting.id, duration_ms = meeting.duration_ms, "recording stopped");
         Ok(Stopped {
             meeting,
@@ -405,6 +448,38 @@ impl Drop for RecordingService {
     }
 }
 
+pub(crate) fn to_stored(s: MeetingStatus) -> StoredStatus {
+    match s {
+        MeetingStatus::Recording => StoredStatus::Recording,
+        MeetingStatus::Processing => StoredStatus::Processing,
+        MeetingStatus::Ready => StoredStatus::Ready,
+        MeetingStatus::NeedsAttention => StoredStatus::NeedsAttention,
+    }
+}
+
+pub(crate) fn from_stored(s: StoredStatus) -> MeetingStatus {
+    match s {
+        StoredStatus::Recording => MeetingStatus::Recording,
+        StoredStatus::Processing => MeetingStatus::Processing,
+        StoredStatus::Ready => MeetingStatus::Ready,
+        StoredStatus::NeedsAttention => MeetingStatus::NeedsAttention,
+    }
+}
+
+/// `waveform.json` next to the audio: the overview drawn by the player.
+/// Derived data, so a failure only costs the drawing.
+fn save_waveform(dir: &std::path::Path, peaks: &[f32]) {
+    let rounded: Vec<f32> = peaks
+        .iter()
+        .map(|p| (p * 1000.0).round() / 1000.0)
+        .collect();
+    if let Ok(json) = serde_json::to_vec(&rounded)
+        && let Err(e) = std::fs::write(dir.join(crate::library::WAVEFORM_FILE), json)
+    {
+        warn!(error = %e, "could not save the waveform");
+    }
+}
+
 fn now_epoch_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -464,7 +539,11 @@ mod tests {
             data_dir: tmp.path().join("data"),
             config_dir: tmp.path().join("config"),
         };
-        (RecordingService::new(paths, Box::new(FakeAudio)), tmp)
+        let store = Store::open_in_memory().unwrap();
+        (
+            RecordingService::new(paths, Box::new(FakeAudio), store),
+            tmp,
+        )
     }
 
     fn opts() -> StartOptions {
@@ -503,6 +582,13 @@ mod tests {
         assert!(stopped.meeting.dir.join("mixed.opus").is_file());
         assert!(!stopped.peaks.is_empty());
         assert!(svc.live().is_none());
+        // Saved to history with its tracks.
+        let saved = svc.store.get_meeting(&id).unwrap().unwrap();
+        assert_eq!(saved.meeting.title, "Walgahii");
+        assert_eq!(saved.meeting.status, jifar_store::Status::Processing);
+        let kinds: Vec<&str> = saved.tracks.iter().map(|t| t.kind.as_str()).collect();
+        assert_eq!(kinds, vec!["mic", "mixed", "system"]);
+        assert!(stopped.meeting.dir.join("waveform.json").is_file());
     }
 
     #[test]

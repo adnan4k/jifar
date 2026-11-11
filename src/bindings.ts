@@ -36,6 +36,16 @@ export const commands = {
 	 *  balance, or back online). Finished chunks are not sent again.
 	 */
 	queueRetry: (meetingId: string) => typedError<null, AppError>(__TAURI_INVOKE("queue_retry", { meetingId })),
+	/**
+	 *  Saved meetings, newest first (FR-HIS-01). `query` matches titles and
+	 *  transcript words (FR-HIS-02 basics).
+	 */
+	meetingsList: (query: string | null, limit: number | null) => typedError<Meeting[], AppError>(__TAURI_INVOKE("meetings_list", { query, limit })),
+	/**  One meeting with its transcript and waveform (FR-HIS-03). */
+	meetingGet: (meetingId: string) => typedError<MeetingDetailDto, AppError>(__TAURI_INVOKE("meeting_get", { meetingId })),
+	meetingRename: (meetingId: string, title: string) => typedError<null, AppError>(__TAURI_INVOKE("meeting_rename", { meetingId, title })),
+	/**  Deletes a meeting and its audio (FR-HIS-04). The UI confirms first. */
+	meetingDelete: (meetingId: string) => typedError<null, AppError>(__TAURI_INVOKE("meeting_delete", { meetingId })),
 };
 
 /** Events */
@@ -171,6 +181,16 @@ export type Meeting = {
 	durationMs: number | null,
 	/**  Where the audio files are. */
 	dir: string,
+};
+
+/**  A saved meeting with its transcript (FR-HIS-03). */
+export type MeetingDetailDto = {
+	meeting: Meeting,
+	segments: SegmentDto[],
+	/**  Waveform overview for the player (0..=1). */
+	peaks: (number | null)[],
+	/**  `mixed.opus` exists and can be played. */
+	hasAudio: boolean,
 };
 
 /**

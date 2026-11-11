@@ -19,7 +19,9 @@ use jifar_audio::{ChunkerConfig, SileroVad, Vad, chunk_track};
 use jifar_providers::{ActionKind, AsrProvider, AudioChunk, LangCode, ProviderError, RawSegment};
 use tracing::{info, warn};
 
+use crate::library::Library;
 use crate::recording::{MeetingInfo, TrackAudio};
+use jifar_store::SegmentRow;
 
 /// Attempts per chunk for `Retryable` errors before it counts as failed.
 const MAX_ATTEMPTS: u32 = 4;
@@ -104,22 +106,75 @@ pub enum RetryError {
     Running,
 }
 
+/// Stable segment ID: the same chunk always yields the same IDs, so a
+/// re-run never duplicates segments in the database.
+pub fn segment_id(meeting_id: &str, track: Track, chunk_index: u32, n: usize) -> String {
+    format!("{meeting_id}-{}-{chunk_index:04}-{n}", track.as_str())
+}
+
 #[derive(Clone)]
 pub struct TranscriptionService {
     provider: Arc<dyn AsrProvider>,
     vad: VadFactory,
     sink: EventSink,
+    library: Library,
     jobs: Arc<Mutex<HashMap<String, MeetingJob>>>,
 }
 
 impl TranscriptionService {
-    pub fn new(provider: Arc<dyn AsrProvider>, vad: VadFactory, sink: EventSink) -> Self {
+    /// Segments and the final status are saved through `library` as they
+    /// arrive; `sink` gets the same events for the UI.
+    pub fn new(
+        provider: Arc<dyn AsrProvider>,
+        vad: VadFactory,
+        sink: EventSink,
+        library: Library,
+    ) -> Self {
         Self {
             provider,
             vad,
             sink,
+            library,
             jobs: Arc::default(),
         }
+    }
+
+    /// Saves, then forwards to the UI.
+    fn emit(&self, event: TranscriptEvent) {
+        let store = self.library.store();
+        let result = match &event {
+            TranscriptEvent::Segments {
+                meeting_id,
+                track,
+                chunk_index,
+                segments,
+            } => store.add_segments(
+                meeting_id,
+                segments
+                    .iter()
+                    .enumerate()
+                    .map(|(n, s)| SegmentRow {
+                        id: segment_id(meeting_id, *track, *chunk_index, n),
+                        track: track.as_str().to_owned(),
+                        start_ms: s.start_ms,
+                        end_ms: s.end_ms,
+                        text: s.text.clone(),
+                        edited: false,
+                    })
+                    .collect(),
+            ),
+            TranscriptEvent::Finished {
+                meeting_id, failed, ..
+            } => store.finish_transcription(meeting_id, *failed),
+            TranscriptEvent::Error { meeting_id, .. } => {
+                store.set_status(meeting_id, jifar_store::Status::NeedsAttention)
+            }
+            _ => Ok(()),
+        };
+        if let Err(e) = result {
+            warn!(error = %e, "could not save transcription progress");
+        }
+        (self.sink)(event);
     }
 
     /// Chunks and transcribes a stopped meeting in the background.
@@ -136,7 +191,24 @@ impl TranscriptionService {
 
     /// Re-runs chunks that are pending or failed (after the user fixed the
     /// key, topped up, or came back online).
+    ///
+    /// A meeting from an earlier session (nothing in memory) is rebuilt from
+    /// its saved tracks; segments already saved are kept, and chunks already
+    /// transcribed are idempotent replays at the provider.
     pub fn retry(&self, meeting_id: &str) -> Result<(), RetryError> {
+        if !self.lock().contains_key(meeting_id) {
+            return match self.library.for_transcription(meeting_id) {
+                Ok(Some((meeting, tracks))) if !tracks.is_empty() => {
+                    let _ = self
+                        .library
+                        .store()
+                        .set_status(meeting_id, jifar_store::Status::Processing);
+                    self.start(&meeting, tracks);
+                    Ok(())
+                }
+                _ => Err(RetryError::Unknown),
+            };
+        }
         {
             let mut jobs = self.lock();
             let job = jobs.get_mut(meeting_id).ok_or(RetryError::Unknown)?;
@@ -167,7 +239,7 @@ impl TranscriptionService {
         let id = meeting.id.clone();
         let fail = |message: String| {
             warn!(meeting = %id, %message, "transcription could not start");
-            (self.sink)(TranscriptEvent::Error {
+            self.emit(TranscriptEvent::Error {
                 meeting_id: id.clone(),
                 message,
             });
@@ -241,7 +313,7 @@ impl TranscriptionService {
             match rt.block_on(self.transcribe_with_retries(&chunk, &language)) {
                 Ok(segments) => {
                     let (track, index) = self.finish_chunk(meeting_id, pos, ChunkState::Done);
-                    (self.sink)(TranscriptEvent::Segments {
+                    self.emit(TranscriptEvent::Segments {
                         meeting_id: meeting_id.to_owned(),
                         track,
                         chunk_index: index,
@@ -250,7 +322,7 @@ impl TranscriptionService {
                 }
                 Err(ProviderError::ActionRequired { kind, message }) => {
                     self.set_running(meeting_id, false);
-                    (self.sink)(TranscriptEvent::Blocked {
+                    self.emit(TranscriptEvent::Blocked {
                         meeting_id: meeting_id.to_owned(),
                         kind,
                         message,
@@ -267,7 +339,7 @@ impl TranscriptionService {
         self.set_running(meeting_id, false);
         let (_, failed, total) = self.counts(meeting_id);
         info!(meeting = %meeting_id, failed, total, "transcription finished");
-        (self.sink)(TranscriptEvent::Finished {
+        self.emit(TranscriptEvent::Finished {
             meeting_id: meeting_id.to_owned(),
             failed,
             total,
@@ -338,7 +410,7 @@ impl TranscriptionService {
 
     fn emit_progress(&self, meeting_id: &str) {
         let (done, failed, total) = self.counts(meeting_id);
-        (self.sink)(TranscriptEvent::Progress {
+        self.emit(TranscriptEvent::Progress {
             meeting_id: meeting_id.to_owned(),
             done,
             failed,
@@ -367,7 +439,29 @@ mod tests {
     use jifar_audio::{EnergyVad, OggOpusWriter, SAMPLE_RATE};
 
     use super::*;
+    use crate::paths::AppPaths;
     use crate::recording::MeetingStatus;
+
+    fn library(dir: &std::path::Path) -> Library {
+        let store = jifar_store::Store::open_in_memory().unwrap();
+        store
+            .create_meeting(jifar_store::Meeting {
+                id: "m1".into(),
+                title: "t".into(),
+                language: "om".into(),
+                status: jifar_store::Status::Processing,
+                started_at: 0,
+                duration_ms: 4_000,
+            })
+            .unwrap();
+        Library::new(
+            store,
+            AppPaths {
+                data_dir: dir.join("data"),
+                config_dir: dir.join("config"),
+            },
+        )
+    }
 
     /// Fails with `fail_with` for the first `fail_first` calls, then echoes
     /// the chunk's time span as a segment.
@@ -447,12 +541,13 @@ mod tests {
     ) {
         let events: Arc<Mutex<Vec<TranscriptEvent>>> = Arc::default();
         let sink_events = Arc::clone(&events);
+        let dir = tempfile::tempdir().unwrap();
         let svc = TranscriptionService::new(
             asr,
             Arc::new(|| Ok(Box::new(EnergyVad::default()) as Box<dyn Vad>)),
             Arc::new(move |e| sink_events.lock().unwrap().push(e)),
+            library(dir.path()),
         );
-        let dir = tempfile::tempdir().unwrap();
         let (info, tracks) = meeting(dir.path());
         svc.start(&info, tracks);
         (svc, events, dir)
@@ -509,6 +604,12 @@ mod tests {
             *a.seen.lock().unwrap(),
             vec!["m1-mic-0000", "m1-system-0000"]
         );
+        drop(ev);
+        // Saved: both segments and the final status.
+        let saved = _svc.library.store().get_meeting("m1").unwrap().unwrap();
+        assert_eq!(saved.segments.len(), 2);
+        assert_eq!(saved.segments[0].id, "m1-mic-0000-0");
+        assert_eq!(saved.meeting.status, jifar_store::Status::Ready);
     }
 
     #[test]
@@ -570,12 +671,13 @@ mod tests {
     fn missing_speech_detection_is_reported() {
         let events: Arc<Mutex<Vec<TranscriptEvent>>> = Arc::default();
         let sink_events = Arc::clone(&events);
+        let dir = tempfile::tempdir().unwrap();
         let svc = TranscriptionService::new(
             asr(0, ProviderError::permanent("unused")),
             Arc::new(|| Err("no onnxruntime".into())),
             Arc::new(move |e| sink_events.lock().unwrap().push(e)),
+            library(dir.path()),
         );
-        let dir = tempfile::tempdir().unwrap();
         let (info, tracks) = meeting(dir.path());
         svc.start(&info, tracks);
         wait_for(

@@ -215,3 +215,41 @@ impl From<jifar_core::provider_keys::TestOutcome> for ProviderKeyTest {
         }
     }
 }
+
+/// A saved meeting with its transcript (FR-HIS-03).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingDetailDto {
+    pub meeting: Meeting,
+    pub segments: Vec<crate::events::SegmentDto>,
+    /// Waveform overview for the player (0..=1).
+    pub peaks: Vec<f32>,
+    /// `mixed.opus` exists and can be played.
+    pub has_audio: bool,
+}
+
+impl From<jifar_core::library::MeetingDetail> for MeetingDetailDto {
+    fn from(d: jifar_core::library::MeetingDetail) -> Self {
+        use crate::events::{SegmentDto, TrackDto};
+        Self {
+            segments: d
+                .segments
+                .into_iter()
+                .map(|s| SegmentDto {
+                    id: s.id,
+                    track: if s.track == "system" {
+                        TrackDto::System
+                    } else {
+                        TrackDto::Mic
+                    },
+                    start_ms: s.start_ms as f64,
+                    end_ms: s.end_ms as f64,
+                    text: s.text,
+                })
+                .collect(),
+            peaks: d.peaks,
+            has_audio: d.has_audio,
+            meeting: d.meeting.into(),
+        }
+    }
+}

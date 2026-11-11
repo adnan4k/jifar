@@ -1,21 +1,26 @@
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   Loader2,
   Mic,
   Pause,
+  Pencil,
   Play,
   RotateCw,
   Settings,
+  Trash2,
+  X,
 } from "lucide-react";
 import { type Ref, useEffect, useRef, useState } from "react";
 import { commands } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import { call } from "@/lib/native";
-import { useMeeting, useRetryQueue } from "@/lib/queries";
+import { useDeleteMeeting, useMeeting, useRenameMeeting, useRetryQueue } from "@/lib/queries";
 import type { MeetingDetail, Segment } from "@/lib/types";
 import { cn, formatTimestamp } from "@/lib/utils";
 import { useRecording } from "@/stores/recording";
+import { useTranscription } from "@/stores/transcription";
 import { useUi } from "@/stores/ui";
 import { RecordingPlayer } from "./RecordingPlayer";
 
@@ -26,15 +31,121 @@ export function TranscriptPane() {
   return (
     <main className="flex min-w-0 flex-1 flex-col">
       <header className="flex h-14 shrink-0 items-center justify-between border-b px-6">
-        <h1 className="truncate font-medium">{meeting?.title ?? "Meeting transcription"}</h1>
-        <Button variant="outline" size="sm" onClick={() => useUi.getState().setSettingsOpen(true)}>
-          <Settings />
-          Settings
-        </Button>
+        {meeting ? (
+          <MeetingTitle key={meeting.id} meeting={meeting} />
+        ) : (
+          <h1 className="truncate font-medium">Meeting transcription</h1>
+        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {meeting && meeting.status !== "recording" && (
+            <DeleteButton key={meeting.id} meeting={meeting} />
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => useUi.getState().setSettingsOpen(true)}
+          >
+            <Settings />
+            Settings
+          </Button>
+        </div>
       </header>
 
       {!meeting ? <EmptyState /> : <MeetingBody meeting={meeting} />}
     </main>
+  );
+}
+
+// Click the title (or its pencil) to rename. Enter saves, Escape cancels.
+function MeetingTitle({ meeting }: { meeting: MeetingDetail }) {
+  const rename = useRenameMeeting();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(meeting.title);
+  const save = () => {
+    const title = draft.trim();
+    if (title && title !== meeting.title) rename.mutate({ id: meeting.id, title });
+    setEditing(false);
+  };
+  if (editing)
+    return (
+      <form
+        className="flex min-w-0 flex-1 items-center gap-1 pr-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save();
+        }}
+      >
+        <input
+          // biome-ignore lint/a11y/noAutofocus: the user just asked to edit the title
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => e.key === "Escape" && setEditing(false)}
+          aria-label="Meeting title"
+          className="h-8 min-w-0 flex-1 rounded-md border bg-bg px-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+        />
+        <Button type="submit" variant="ghost" size="icon" aria-label="Save title">
+          <Check />
+        </Button>
+        <Button variant="ghost" size="icon" aria-label="Cancel" onClick={() => setEditing(false)}>
+          <X />
+        </Button>
+      </form>
+    );
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setDraft(meeting.title);
+        setEditing(true);
+      }}
+      title="Rename"
+      className="group flex min-w-0 items-center gap-2 rounded-md text-left"
+    >
+      <h1 className="truncate font-medium">{meeting.title}</h1>
+      <Pencil className="size-3.5 shrink-0 text-muted opacity-0 transition-opacity group-hover:opacity-100" />
+    </button>
+  );
+}
+
+// Two-step delete: the first click arms it, the second (within 4 s) deletes
+// the meeting and its audio from this computer (FR-HIS-04).
+function DeleteButton({ meeting }: { meeting: MeetingDetail }) {
+  const del = useDeleteMeeting();
+  const [armed, setArmed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 4_000);
+    return () => clearTimeout(t);
+  }, [armed]);
+
+  const click = () => {
+    if (!armed) {
+      setArmed(true);
+      setError(null);
+      return;
+    }
+    setArmed(false);
+    del.mutate(meeting.id, {
+      onSuccess: () => useUi.getState().selectMeeting(null),
+      onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+    });
+  };
+  return (
+    <>
+      {error && <span className="text-xs text-warn">{error}</span>}
+      <Button
+        variant={armed ? "danger" : "ghost"}
+        size="sm"
+        onClick={click}
+        disabled={del.isPending}
+        title="Delete this meeting and its audio from this computer"
+      >
+        {del.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />}
+        {armed ? "Click again to delete" : "Delete"}
+      </Button>
+    </>
   );
 }
 
@@ -72,7 +183,7 @@ function MeetingBody({ meeting }: { meeting: MeetingDetail }) {
 // A real recording from the core: live transcription progress, the
 // transcript as it arrives, and the real audio player at the bottom.
 function RecordedMeeting({ meeting }: { meeting: MeetingDetail }) {
-  const t = meeting.recorded?.transcription;
+  const t = useTranscription(meeting.id);
   const hasText = meeting.segments.length > 0;
   return (
     <>
@@ -92,7 +203,23 @@ function RecordedMeeting({ meeting }: { meeting: MeetingDetail }) {
 }
 
 function TranscriptionStatus({ meeting }: { meeting: MeetingDetail }) {
-  const t = meeting.recorded?.transcription;
+  const live = useTranscription(meeting.id);
+  // After a restart there is no live progress; the saved status still says
+  // whether something needs a retry.
+  const t =
+    live ??
+    (meeting.status === "needs_attention"
+      ? {
+          done: 0,
+          failed: 1,
+          total: 1,
+          finished: true,
+          blocked: null,
+          message: "Part of this meeting may not be transcribed. Retry to finish it.",
+        }
+      : meeting.status === "processing"
+        ? { done: 0, failed: 0, total: 0, finished: false, blocked: null, message: null }
+        : undefined);
   const [retrying, setRetrying] = useState(false);
   const retry = () => {
     setRetrying(true);
@@ -160,7 +287,7 @@ function TranscriptionStatus({ meeting }: { meeting: MeetingDetail }) {
 }
 
 function RecordedEmpty({ meeting }: { meeting: MeetingDetail }) {
-  const t = meeting.recorded?.transcription;
+  const t = useTranscription(meeting.id);
   const problems = meeting.recorded?.problems ?? [];
   const noSpeech = t?.finished && t.total === 0 && !t.message;
   return (

@@ -71,3 +71,15 @@ impl From<jifar_core::provider_keys::KeyError> for AppError {
         Self::new(code, e.to_string())
     }
 }
+
+impl From<jifar_core::library::LibraryError> for AppError {
+    fn from(e: jifar_core::library::LibraryError) -> Self {
+        use jifar_core::library::LibraryError;
+        let code = match &e {
+            LibraryError::NotFound(_) => ErrorCode::MeetingNotFound,
+            LibraryError::EmptyTitle => ErrorCode::InvalidInput,
+            LibraryError::Store(_) | LibraryError::Io(_) => ErrorCode::StorageFailed,
+        };
+        Self::new(code, e.to_string())
+    }
+}

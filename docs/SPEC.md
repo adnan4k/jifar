@@ -184,9 +184,9 @@ Commands (all `async`, returning `Result<T, AppError>`):
 | `recording_start`      | `{title?, language, micDevice?, sinkDevice?}` | `{meeting: Meeting, notices[]}` (notices: device fallbacks, a track that couldn't start) |
 | `recording_pause` / `recording_resume` | `{meetingId}`                 | `()` |
 | `recording_stop`       | `{meetingId}`                                | `{meeting: Meeting, problems[], peaks[]}` (problems → `needs_attention`; peaks: waveform of `mixed.opus`, 0..1) |
-| `meetings_list`        | `{cursor?, limit}`                           | `Page<MeetingSummary>` |
-| `meeting_get`          | `{meetingId}`                                | `MeetingDetail` |
-| `meeting_rename` / `meeting_delete` | `{meetingId, ...}`              | `()` |
+| `meetings_list`        | `{query?, limit?}`                           | `Meeting[]`, newest first. `query` matches titles and transcript words (FTS, whole Qubee words). Cursor paging when histories grow |
+| `meeting_get`          | `{meetingId}`                                | `{meeting, segments[], peaks[], hasAudio}` |
+| `meeting_rename` / `meeting_delete` | `{meetingId, title}` / `{meetingId}` | `()`. Delete removes the database rows and `meetings/<id>/` (UI confirms with a second click; refused while that meeting records) |
 | `segment_update`       | `{segmentId, text}`                          | `Segment` |
 | `notes_generate`       | `{meetingId, outputLanguage}`                | `Notes` |
 | `search`               | `{query, limit}`                             | `SearchHit[]` |

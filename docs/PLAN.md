@@ -98,7 +98,7 @@ Goal: know how good Addis Scribe is on real Afaan Oromo meetings, behind the tra
 Goal: the end-to-end loop works in the real app. Record → stop → chunk + transcribe → meeting reviewable, including after a restart. **No transcription while recording** (spec D1).
 
 Backend:
-- [ ] `jifar-store`: dedicated DB thread, WAL, `rusqlite_migration`, migration 001 = spec §7.2 schema, FTS5 tables with `tokenchars "'"`. UUIDv7 IDs.
+- [x] `jifar-store`: dedicated DB thread, WAL, `rusqlite_migration`, migration 001 = spec §7.2 schema, FTS5 tables with `tokenchars "'"`. UUIDv7 IDs. (Meetings, tracks, segments saved; stable segment IDs make re-runs idempotent; interrupted recordings recovered at startup and unfinished transcriptions resumed. `asr_jobs` table exists but job state is still in memory until `jifar-queue`.)
 - [ ] `jifar-queue`: persistent `asr_jobs` state machine, exponential backoff + jitter (5 s → 10 min), restart recovery (`in_flight` → `pending`), connectivity detection that pauses and resumes the queue, manual "retry now". **FR-TRN-04**
 - [ ] `jifar-core::MeetingService`: start/stop/pause orchestration. On stop: render `mixed.opus`, run the offline chunker, create jobs, then jobs → segments. Meeting status `recording → processing → ready / needs_attention`. A crash mid-recording recovers by chunking whatever is on disk.
 - [ ] Tauri commands and events from spec §6.2 (recording, meetings, devices, settings), all typed via tauri-specta. `AppError` with stable codes. (Done for recording, devices and settings: `RecordingService` in `jifar-core`, all four events. Meetings commands wait for `jifar-store`.)
