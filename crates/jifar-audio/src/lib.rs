@@ -53,7 +53,7 @@ pub use recorder::{TrackRecorder, TrackStats};
 pub use resample::CHUNK_SAMPLE_RATE;
 pub use ring::{CaptureStats, DEFAULT_RING_CAPACITY, RingReader, RtSink, ring};
 pub use session::{
-    RecordingSession, SessionStatus, SessionSummary, Track, TrackStatus, TrackSummary,
+    Pause, RecordingSession, SessionStatus, SessionSummary, Track, TrackStatus, TrackSummary,
 };
 pub use source::CaptureSource;
 pub use vad::{EnergyVad, SileroVad, VAD_WINDOW, VAD_WINDOW_MS, Vad};

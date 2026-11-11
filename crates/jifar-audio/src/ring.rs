@@ -2,7 +2,7 @@
 //! encoder worker (NFR-02).
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use rtrb::{Consumer, Producer, RingBuffer};
@@ -26,6 +26,12 @@ struct StatsInner {
     delivered: AtomicU64,
     /// Samples dropped because the ring was full.
     overruns: AtomicU64,
+    /// While set, pushed samples are discarded (FR-REC-09).
+    paused: AtomicBool,
+    /// When the current pause began, in ns after `base`.
+    pause_started_ns: AtomicU64,
+    /// Paused time after the first sample, from finished pauses.
+    paused_total_ns: AtomicU64,
 }
 
 /// Counters shared between the capture callback and everyone else. All
@@ -40,7 +46,63 @@ impl CaptureStats {
             first_sample_ns: AtomicU64::new(NONE),
             delivered: AtomicU64::new(0),
             overruns: AtomicU64::new(0),
+            paused: AtomicBool::new(false),
+            pause_started_ns: AtomicU64::new(0),
+            paused_total_ns: AtomicU64::new(0),
         }))
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.0.paused.load(Ordering::Acquire)
+    }
+
+    /// Pauses or resumes the track at `now`. While paused the source keeps
+    /// running but its samples are discarded, and the time doesn't count as
+    /// recording time. Only the session's control thread calls this.
+    pub(crate) fn set_paused(&self, paused: bool, now: Instant) {
+        let inner = &self.0;
+        if paused == inner.paused.load(Ordering::Acquire) {
+            return;
+        }
+        let now_ns = self.ns_since_base(now);
+        if paused {
+            inner.pause_started_ns.store(now_ns, Ordering::Relaxed);
+            inner.paused.store(true, Ordering::Release);
+        } else {
+            inner.paused.store(false, Ordering::Release);
+            let add = self.current_pause_ns(now_ns);
+            inner.paused_total_ns.fetch_add(add, Ordering::Relaxed);
+        }
+    }
+
+    /// Recording time since the first sample at `now`: wall time minus the
+    /// paused time. `None` until audio arrives.
+    pub fn active_since_first(&self, now: Instant) -> Option<Duration> {
+        let first = self.first_sample_at()?;
+        let mut paused = self.0.paused_total_ns.load(Ordering::Relaxed);
+        if self.is_paused() {
+            paused += self.current_pause_ns(self.ns_since_base(now));
+        }
+        Some(
+            now.saturating_duration_since(first)
+                .saturating_sub(Duration::from_nanos(paused)),
+        )
+    }
+
+    /// Part of the current pause that falls after the first sample (a pause
+    /// before any audio arrived doesn't shift the track's timeline).
+    fn current_pause_ns(&self, now_ns: u64) -> u64 {
+        match self.0.first_sample_ns.load(Ordering::Acquire) {
+            NONE => 0,
+            first => {
+                let start = self.0.pause_started_ns.load(Ordering::Relaxed).max(first);
+                now_ns.saturating_sub(start)
+            }
+        }
+    }
+
+    fn ns_since_base(&self, at: Instant) -> u64 {
+        u64::try_from(at.saturating_duration_since(self.0.base).as_nanos()).unwrap_or(NONE - 1)
     }
 
     /// Samples dropped so far. Zero on a healthy recording (NFR-02).
@@ -75,13 +137,17 @@ pub struct RtSink {
 
 impl RtSink {
     /// Copies as many samples as fit into the ring and counts the rest as
-    /// overruns. Returns the number of samples accepted.
+    /// overruns. Returns the number of samples accepted. While paused,
+    /// samples are discarded uncounted and reported as accepted.
     #[inline]
     pub fn push(&mut self, samples: &[f32]) -> usize {
         if samples.is_empty() {
             return 0;
         }
         let stats = &self.stats.0;
+        if stats.paused.load(Ordering::Relaxed) {
+            return samples.len();
+        }
         if stats.first_sample_ns.load(Ordering::Relaxed) == NONE {
             // `Instant::now` is a vDSO clock read: no syscall, lock or alloc.
             let block =
@@ -184,6 +250,50 @@ mod tests {
         assert!(before.duration_since(first) < Duration::from_millis(150));
         sink.push(&[0.0; 10]);
         assert_eq!(stats.first_sample_at(), Some(first));
+    }
+
+    #[test]
+    fn paused_samples_are_discarded_and_not_counted() {
+        let (mut sink, mut reader, stats) = ring(64);
+        sink.push(&[1.0; 4]);
+        let t0 = Instant::now();
+        stats.set_paused(true, t0);
+        assert_eq!(
+            sink.push(&[9.0; 100]),
+            100,
+            "reported as taken, not as overrun"
+        );
+        stats.set_paused(false, t0 + Duration::from_millis(500));
+        sink.push(&[2.0; 4]);
+
+        assert_eq!(stats.delivered_samples(), 8);
+        assert_eq!(stats.overrun_samples(), 0);
+        let mut buf = [0.0; 16];
+        assert_eq!(reader.pop_into(&mut buf), 8);
+        assert_eq!(&buf[..8], &[1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0]);
+        // The 500 ms pause is not recording time.
+        let active = stats
+            .active_since_first(t0 + Duration::from_millis(600))
+            .unwrap();
+        let wall = (t0 + Duration::from_millis(600)) - stats.first_sample_at().unwrap();
+        assert_eq!(wall - active, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn pause_before_first_sample_does_not_shift_the_timeline() {
+        let (mut sink, _reader, stats) = ring(64);
+        let t0 = Instant::now();
+        stats.set_paused(true, t0);
+        sink.push(&[1.0; 4]);
+        assert!(stats.first_sample_at().is_none());
+        stats.set_paused(false, t0 + Duration::from_millis(300));
+        sink.push(&[1.0; 4]);
+        let first = stats.first_sample_at().unwrap();
+        let now = first + Duration::from_millis(100);
+        assert_eq!(
+            stats.active_since_first(now),
+            Some(Duration::from_millis(100))
+        );
     }
 
     #[test]

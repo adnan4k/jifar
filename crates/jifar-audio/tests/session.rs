@@ -224,3 +224,68 @@ fn device_stall_is_filled_so_tracks_stay_aligned() {
     // Raw drift includes delivery jitter, so this bound is looser.
     assert!(residual.abs() < 50.0, "tracks {residual:+.1} ms apart");
 }
+
+#[test]
+fn pause_cuts_paused_time_out_of_both_tracks() {
+    let dir = tempfile::tempdir().unwrap();
+    let meeting = dir.path().join("meeting");
+    // Devices keep delivering while paused, like real ones.
+    let mut session = RecordingSession::start(
+        &meeting,
+        vec![
+            (Track::Mic, fake(sine(300.0, 10.0))),
+            (Track::System, fake(sine(500.0, 10.0))),
+        ],
+    )
+    .unwrap();
+    thread::sleep(Duration::from_millis(1_500));
+    session.pause();
+    session.pause(); // idempotent
+    assert!(session.status().paused);
+    let frozen = session.status().elapsed_ms;
+    let written: Vec<u64> = session
+        .status()
+        .tracks
+        .iter()
+        .map(|t| t.samples_written)
+        .collect();
+    thread::sleep(Duration::from_millis(2_500));
+    let st = session.status();
+    assert!(st.elapsed_ms - frozen <= 5, "clock ran while paused");
+    for (t, before) in st.tracks.iter().zip(&written) {
+        // Only the ring backlog (a few ms) may land after the pause.
+        assert!(
+            t.samples_written - before < 4_800,
+            "{:?} kept recording",
+            t.track
+        );
+    }
+    session.resume();
+    session.resume(); // idempotent
+    // Run past one drift window so a mis-measured pause would show up.
+    thread::sleep(Duration::from_millis(3_000));
+    let st = session.status();
+    let written = |t| st.track(t).unwrap().samples_written as i64;
+    let gap_ms = (written(Track::Mic) - written(Track::System)) * 1000 / i64::from(SAMPLE_RATE);
+    let summary = session.stop();
+
+    assert_eq!(summary.pauses.len(), 1);
+    let pause = summary.pauses[0];
+    assert!((1_450..1_650).contains(&pause.at_ms), "{pause:?}");
+    assert!((2_450..2_650).contains(&pause.len_ms), "{pause:?}");
+    // 1.5 s + 3 s recorded; the 2.5 s pause is not in the timeline.
+    assert!(
+        (4_400..4_700).contains(&summary.duration_ms),
+        "{} ms",
+        summary.duration_ms
+    );
+    assert!(gap_ms.abs() <= 20, "tracks {gap_ms:+} ms apart");
+    for t in &summary.tracks {
+        let stats = t.outcome.as_ref().unwrap();
+        // The pause must not look like a device stall.
+        assert_eq!(stats.silence_inserted_ms, 0, "{:?}", t.track);
+        assert!(stats.drift_correction_ms.abs() <= 20, "{:?}", t.track);
+        let ms = decode(&t.path).len() as u64 * 1000 / u64::from(SAMPLE_RATE);
+        assert!((4_300..4_700).contains(&ms), "{:?}: {ms} ms", t.track);
+    }
+}

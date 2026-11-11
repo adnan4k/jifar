@@ -71,7 +71,7 @@ Priority: **P0** = required for V1 release, **P1** = should ship with V1, **P2**
 | FR-REC-06  | P0  | A recording indicator stays visible the whole time a recording is active, including when the main window is hidden. |
 | FR-REC-07  | P1  | User can pick the input and output devices. The choice is remembered. |
 | FR-REC-08  | P1  | Live level meters for each track, with a warning when a track is silent for more than 30 s. |
-| FR-REC-09  | P1  | Pause and resume. |
+| FR-REC-09  | P1  | Pause and resume. Paused time is cut out of the recording: both tracks continue seamlessly on resume, the recording clock stops while paused, and the pauses are listed so the UI can mark them. Devices stay open and their audio is discarded, so the recording indicator stays visible (shown as paused). |
 | FR-REC-10  | P1  | Echo cancellation on the mic track, using the system track as the reference, for users without headphones. |
 | FR-REC-11  | P2  | Mute a single track while recording. |
 
@@ -212,7 +212,7 @@ Events (Rust → UI):
 - Archive files are `mic.opus` and `system.opus` (Ogg/Opus, ~32 kbps VOIP mode), written page by page.
 - For ASR, chunking runs **after recording stops** (D1), not in the capture pipeline. Each track's `.opus` is decoded and cut into chunks of ~15–30 s at Silero VAD silence boundaries (hard cap 30 s). Chunks are resampled to 16 kHz mono 16-bit WAV with `rubato` and saved in `chunks/`. Chunks with no detected speech (< 250 ms) are not written, so they are never sent to ASR, and long silences are trimmed to a ~300 ms pad around speech. Each chunk carries its `start_ms`/`end_ms` on the recording clock. Normal processing, crash recovery and re-transcription (FR-TRN-07) all use this same path.
 - AEC (P1) processes the mic track against the system track before encoding.
-- Both tracks share one monotonic clock that starts at `recording_start`. Every timestamp is in ms relative to that clock. Each track's drift against that clock is measured on the encoder worker (lower envelope of wall time minus delivered audio, so delivery jitter is ignored). Above 20 ms it is corrected by rate matching (rubato `Slip`: single frames inserted or dropped behind a crossfade, ≤ 0.5%, no delay, bit-exact pass-through while idle) until the error is below 2 ms. Device stalls (a persistent step > 250 ms) are filled with silence instead. Faster-than-real-time sources (fixtures, offline encoding) are never corrected.
+- Both tracks share one monotonic clock that starts at `recording_start` and stops while paused (FR-REC-09). Every timestamp is in ms of recording time on that clock. Each track's drift against that clock is measured on the encoder worker (lower envelope of wall time minus delivered audio, so delivery jitter is ignored). Above 20 ms it is corrected by rate matching (rubato `Slip`: single frames inserted or dropped behind a crossfade, ≤ 0.5%, no delay, bit-exact pass-through while idle) until the error is below 2 ms. Device stalls (a persistent step > 250 ms) are filled with silence instead. Faster-than-real-time sources (fixtures, offline encoding) are never corrected.
 - `mixed.opus` is rendered in Rust on stop, for playback and export.
 
 ### 6.4 Transcription queue and recovery

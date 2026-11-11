@@ -2,12 +2,15 @@
 //! monitor) to `<dir>/mic.opus` and `<dir>/system.opus` through PipeWire or
 //! PulseAudio (detected at runtime, or forced with `--backend`).
 //! This is the manual device check for M1: long runs, `kill -9` recovery,
-//! overruns and drift.
+//! overruns, drift and pause/resume.
 //!
 //!     cargo run -p jifar-audio --example record -- <dir> [--duration SECS]
 //!         [--mic-only | --system-only] [--backend pipewire|pulse]
+//!         [--pause AT:LEN]...
 //!
-//! Stops on Ctrl-C or after `--duration`. Prints a status line every 5 s.
+//! Stops on Ctrl-C or after `--duration` (wall time). `--pause 10:5` pauses
+//! 10 s after start for 5 s; it can be repeated. Prints a status line every
+//! 5 s.
 //! `RUST_LOG=debug` shows stream state changes.
 
 use std::path::PathBuf;
@@ -27,6 +30,8 @@ struct Args {
     duration: Option<Duration>,
     tracks: Vec<Track>,
     backend: Option<Backend>,
+    /// (start, length) of each pause, in wall time since start.
+    pauses: Vec<(Duration, Duration)>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -34,6 +39,7 @@ fn parse_args() -> Result<Args, String> {
     let mut duration = None;
     let mut tracks = vec![Track::Mic, Track::System];
     let mut backend = None;
+    let mut pauses = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -51,6 +57,14 @@ fn parse_args() -> Result<Args, String> {
                     _ => return Err("--backend needs pipewire or pulse".into()),
                 });
             }
+            "--pause" => {
+                let spec = args.next().unwrap_or_default();
+                let (at, len) = spec
+                    .split_once(':')
+                    .and_then(|(a, l)| Some((a.parse().ok()?, l.parse().ok()?)))
+                    .ok_or("--pause needs AT:LEN in seconds, e.g. 10:5")?;
+                pauses.push((Duration::from_secs(at), Duration::from_secs(len)));
+            }
             "--mic-only" => tracks = vec![Track::Mic],
             "--system-only" => tracks = vec![Track::System],
             "-h" | "--help" => return Err(String::new()),
@@ -63,6 +77,7 @@ fn parse_args() -> Result<Args, String> {
         duration,
         tracks,
         backend,
+        pauses,
     })
 }
 
@@ -82,7 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             eprintln!(
                 "usage: record <dir> [--duration SECS] [--mic-only | --system-only] \
-                 [--backend pipewire|pulse]"
+                 [--backend pipewire|pulse] [--pause AT:LEN]..."
             );
             std::process::exit(2);
         }
@@ -107,7 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         sources.push((t, backend.open(target)?));
     }
 
-    let session = RecordingSession::start(&args.dir, sources)?;
+    let mut session = RecordingSession::start(&args.dir, sources)?;
     println!(
         "recording to {} via {backend} (Ctrl-C to stop{})",
         args.dir.display(),
@@ -122,6 +137,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let started = Instant::now();
     let mut next_status = started + STATUS_EVERY;
     while !stop.load(Ordering::Relaxed) && args.duration.is_none_or(|d| started.elapsed() < d) {
+        let t = started.elapsed();
+        let in_pause = args.pauses.iter().any(|&(at, len)| t >= at && t < at + len);
+        if in_pause && !session.is_paused() {
+            session.pause();
+            println!("[paused]");
+        } else if !in_pause && session.is_paused() {
+            session.resume();
+            println!("[resumed]");
+        }
         if Instant::now() >= next_status {
             print_status(&session.status());
             next_status += STATUS_EVERY;
@@ -132,9 +156,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_status(&session.status());
     let summary = session.stop();
     println!(
-        "\nstopped after {:.1} s",
+        "\nstopped after {:.1} s of recording",
         summary.duration_ms as f64 / 1000.0
     );
+    for p in &summary.pauses {
+        println!(
+            "  paused at {:.1} s for {:.1} s",
+            p.at_ms as f64 / 1000.0,
+            p.len_ms as f64 / 1000.0
+        );
+    }
     for t in &summary.tracks {
         let offset = t.start_offset_ms.map_or("no audio".to_owned(), |ms| {
             format!("first sample at +{ms} ms")
@@ -160,7 +191,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn print_status(status: &SessionStatus) {
-    let mut line = format!("[{:>7.1} s]", status.elapsed_ms as f64 / 1000.0);
+    let mut line = format!(
+        "[{:>7.1} s{}]",
+        status.elapsed_ms as f64 / 1000.0,
+        if status.paused { " paused" } else { "" }
+    );
     for t in &status.tracks {
         line.push_str(&format!("  {}", track_status(t)));
     }

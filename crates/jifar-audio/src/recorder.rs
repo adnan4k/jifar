@@ -219,8 +219,13 @@ fn run_worker(
         let now = Instant::now();
         if now >= next_drift_check {
             next_drift_check = now + DRIFT_INTERVAL;
-            if let (Some(c), Some(first)) = (corrector.as_mut(), ctx.stats.first_sample_at()) {
-                let wall_ms = now.saturating_duration_since(first).as_secs_f64() * 1000.0;
+            // Paused time isn't recording time: measure on the active clock,
+            // and not at all while paused.
+            let active = (!ctx.stats.is_paused())
+                .then(|| ctx.stats.active_since_first(now))
+                .flatten();
+            if let (Some(c), Some(active)) = (corrector.as_mut(), active) {
+                let wall_ms = active.as_secs_f64() * 1000.0;
                 c.observe(wall_ms, ctx.stats.delivered_samples(), &mut write)?;
                 publish_drift(c, &ctx.drift);
             }

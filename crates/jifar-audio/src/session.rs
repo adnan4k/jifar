@@ -12,11 +12,18 @@
 //! so what remains between the tracks, [`SessionStatus::inter_track_residual_ms`],
 //! stays within that bound.
 //!
+//! Pause/resume (FR-REC-09) cuts the paused time out of the recording: the
+//! session clock stops, devices keep running but their audio is discarded,
+//! and the files continue seamlessly on resume. All timestamps are recording
+//! time (pauses excluded). Each track cuts at its own callback block, so a
+//! pause may leave the tracks a few ms apart; drift correction runs on
+//! recording time and absorbs that like any other drift.
+//!
 //! Tracks are independent. If one fails to start or dies mid-recording, the
 //! other keeps recording and the failure is reported, never hidden.
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
 
@@ -73,10 +80,21 @@ pub struct TrackStatus {
     pub source_error: Option<String>,
 }
 
+/// A pause, on the recording timeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pause {
+    /// Recording time at which the pause started (where the cut is).
+    pub at_ms: u64,
+    /// Wall-clock length of the pause.
+    pub len_ms: u64,
+}
+
 /// Live view of a session.
 #[derive(Debug, Clone)]
 pub struct SessionStatus {
+    /// Recording time so far (pauses excluded).
     pub elapsed_ms: u64,
+    pub paused: bool,
     pub tracks: Vec<TrackStatus>,
     /// Tracks that never started, with the reason.
     pub failed_to_start: Vec<(Track, String)>,
@@ -120,7 +138,10 @@ pub struct TrackSummary {
 #[derive(Debug)]
 pub struct SessionSummary {
     pub dir: PathBuf,
+    /// Recording time (pauses excluded).
     pub duration_ms: u64,
+    /// Pauses in order, including one still open at stop.
+    pub pauses: Vec<Pause>,
     pub tracks: Vec<TrackSummary>,
     pub failed_to_start: Vec<(Track, String)>,
 }
@@ -142,6 +163,11 @@ pub struct RecordingSession {
     started_at: Instant,
     tracks: Vec<ActiveTrack>,
     failed_to_start: Vec<(Track, String)>,
+    pauses: Vec<Pause>,
+    /// Wall time of finished pauses.
+    paused_total: Duration,
+    /// Start of the current pause.
+    paused_since: Option<Instant>,
 }
 
 impl RecordingSession {
@@ -186,7 +212,59 @@ impl RecordingSession {
             started_at,
             tracks,
             failed_to_start,
+            pauses: Vec::new(),
+            paused_total: Duration::ZERO,
+            paused_since: None,
         })
+    }
+
+    /// Pauses every track. No-op if already paused.
+    pub fn pause(&mut self) {
+        if self.paused_since.is_some() {
+            return;
+        }
+        let now = Instant::now();
+        for t in &self.tracks {
+            t.recorder.capture_stats().set_paused(true, now);
+        }
+        self.pauses.push(Pause {
+            at_ms: self.recording_ms(now),
+            len_ms: 0,
+        });
+        self.paused_since = Some(now);
+        info!(at_ms = self.recording_ms(now), "recording paused");
+    }
+
+    /// Resumes every track. No-op if not paused.
+    pub fn resume(&mut self) {
+        let Some(since) = self.paused_since.take() else {
+            return;
+        };
+        let now = Instant::now();
+        for t in &self.tracks {
+            t.recorder.capture_stats().set_paused(false, now);
+        }
+        let len = now.saturating_duration_since(since);
+        self.paused_total += len;
+        if let Some(p) = self.pauses.last_mut() {
+            p.len_ms = millis(len);
+        }
+        info!(len_ms = millis(len), "recording resumed");
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused_since.is_some()
+    }
+
+    /// Recording time at `now`: wall time since start minus pauses.
+    fn recording_ms(&self, now: Instant) -> u64 {
+        let current = self
+            .paused_since
+            .map_or(Duration::ZERO, |s| now.saturating_duration_since(s));
+        millis(
+            now.saturating_duration_since(self.started_at)
+                .saturating_sub(self.paused_total + current),
+        )
     }
 
     /// The session clock's zero (`recording_start`).
@@ -211,8 +289,8 @@ impl RecordingSession {
                     samples_written: t.recorder.samples_written(),
                     overrun_samples: stats.overrun_samples(),
                     start_offset_ms: first.map(|f| signed_ms(self.started_at, f)),
-                    drift_ms: first.map(|f| {
-                        let wall_ms = now.saturating_duration_since(f).as_secs_f64() * 1000.0;
+                    drift_ms: stats.active_since_first(now).map(|active| {
+                        let wall_ms = active.as_secs_f64() * 1000.0;
                         let audio_ms =
                             stats.delivered_samples() as f64 * 1000.0 / f64::from(SAMPLE_RATE);
                         wall_ms - audio_ms
@@ -224,7 +302,8 @@ impl RecordingSession {
             })
             .collect();
         SessionStatus {
-            elapsed_ms: duration_ms(self.started_at, now),
+            elapsed_ms: self.recording_ms(now),
+            paused: self.is_paused(),
             tracks,
             failed_to_start: self.failed_to_start.clone(),
         }
@@ -232,8 +311,12 @@ impl RecordingSession {
 
     /// Stops every track, drains and finalizes its file. Each track's outcome
     /// is reported separately; one failing does not affect the others.
-    pub fn stop(self) -> SessionSummary {
-        let duration_ms = duration_ms(self.started_at, Instant::now());
+    pub fn stop(mut self) -> SessionSummary {
+        let now = Instant::now();
+        let duration_ms = self.recording_ms(now);
+        if let (Some(since), Some(p)) = (self.paused_since, self.pauses.last_mut()) {
+            p.len_ms = millis(now.saturating_duration_since(since));
+        }
         let started_at = self.started_at;
         let tracks = self
             .tracks
@@ -261,14 +344,15 @@ impl RecordingSession {
         SessionSummary {
             dir: self.dir,
             duration_ms,
+            pauses: self.pauses,
             tracks,
             failed_to_start: self.failed_to_start,
         }
     }
 }
 
-fn duration_ms(from: Instant, to: Instant) -> u64 {
-    u64::try_from(to.saturating_duration_since(from).as_millis()).unwrap_or(u64::MAX)
+fn millis(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// `to - from` in ms, negative if `to` is earlier.
