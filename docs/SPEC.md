@@ -118,7 +118,7 @@ Priority: **P0** = required for V1 release, **P1** = should ship with V1, **P2**
 | FR-PRV-01  | P0  | No account, login or telemetry by default. |
 | FR-PRV-02  | P0  | All data is stored under the user's data directory (§7.1). |
 | FR-PRV-03  | P0  | Settings say plainly which data goes to which provider (audio → ASR, transcript text → LLM). |
-| FR-PRV-04  | P0  | API keys are stored in the OS keyring (Secret Service), never in plain-text config. |
+| FR-PRV-04  | P0  | API keys are stored in the OS keyring (Secret Service), never in plain-text config. Entries are service `jifar`, account = provider ID (e.g. `addis-scribe`). Keys are read per request, so a key added in Settings works without a restart. |
 | FR-PRV-05  | P1  | "Local only" mode turns off all network providers. Recording and history still work. |
 
 ---
@@ -250,9 +250,15 @@ pub trait NotesProvider: Send + Sync {
 }
 ```
 
-`ProviderError` separates `Retryable` (network, 5xx, 429) from `Permanent` (auth, bad input). The queue retries only `Retryable` errors.
+`ProviderError` has three classes, and the queue acts on the class alone:
 
-> **OQ-1 (mostly resolved, see [`providers/addis-scribe.md`](./providers/addis-scribe.md)):** Addis Scribe `POST /api/v1/scribe/transcribe` is a batch upload (≤ 1 h / 95 MiB) with `x-api-key` auth, `language=om`, and word timestamps plus segments (`timestamps=word`). Its `request_id` is an idempotency key, set to the `asr_jobs.id`, so retries never double-bill. Price: 3.5 ETB per 1,000 transcript characters. **Still open:** data retention, and whether to add a `ProviderError::ActionRequired` class for bad keys and an empty wallet (proposal in the provider notes, §5). For providers without timestamps, chunk boundaries are used as segment times.
+- `Retryable { retry_after? }` (network, timeouts, 429, 5xx, still processing): retry the same request with backoff, honouring `retry_after`.
+- `ActionRequired { kind: Auth | Credits }` (no key, key rejected 401/403, balance too low 402): no request can succeed until the user acts. The queue **pauses** for that provider, as when offline, the UI asks the user to fix the key or top up, and the queue resumes afterwards. Attempts are not counted.
+- `Permanent` (bad audio, unsupported language, other 4xx): this job fails, and other jobs continue.
+
+*(`ActionRequired` added 2026-11-11, proposed in `providers/addis-scribe.md` §5; flagged for product-owner review.)*
+
+> **OQ-1 (mostly resolved, see [`providers/addis-scribe.md`](./providers/addis-scribe.md)):** Addis Scribe `POST /api/v1/scribe/transcribe` is a batch upload (≤ 1 h / 95 MiB) with `x-api-key` auth, `language=om`, and word timestamps plus segments (`timestamps=word`). Its `request_id` is an idempotency key, set to the `asr_jobs.id`, so retries never double-bill. Price: 3.5 ETB per 1,000 transcript characters. **Still open:** data retention. For providers without timestamps, chunk boundaries are used as segment times.
 
 ---
 

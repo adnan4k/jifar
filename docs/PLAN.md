@@ -82,10 +82,10 @@ Goal: record mic and system audio to separate, aligned, crash-safe Opus tracks f
 Goal: know how good Addis Scribe is on real Afaan Oromo meetings, behind the trait the app will use.
 
 - [ ] **Week 1: close OQ-1.** (Docs read 2026-11-11: `docs/providers/addis-scribe.md`. Left: data retention answer from Addis AI, live-API verification with a key, `ActionRequired` decision.) Get API access and document streaming vs. batch, auth, limits, timestamps, cost per hour and data retention in `docs/providers/addis-scribe.md`. Update spec §6.5/§12.
-- [ ] `AsrProvider`, `NotesProvider`, `ProviderError { Retryable, Permanent }`, plus domain types (`AudioChunk`, `RawSegment`, `LangCode`).
-- [ ] Addis Scribe implementation with correct error classification (network/5xx/429 → `Retryable`; auth/4xx → `Permanent`). If the API returns no timestamps, fall back to chunk boundaries. **FR-TRN-01, FR-TRN-02**
-- [ ] `wiremock` contract tests built from recorded responses. Live tests gated behind `JIFAR_LIVE_TESTS=1`.
-- [ ] API key stored in and read from the keyring (`keyring` crate). **FR-PRV-04**
+- [x] `AsrProvider`, `NotesProvider`, `ProviderError { Retryable, ActionRequired, Permanent }`, plus domain types (`AudioChunk`, `RawSegment`, `LangCode`). (`NotesProvider` is the contract only, with a strict `MeetingNotes::parse`; the implementation is M4.)
+- [ ] Addis Scribe implementation with correct error classification (network/5xx/429 → `Retryable`; auth/4xx → `Permanent`). If the API returns no timestamps, fall back to chunk boundaries. **FR-TRN-01, FR-TRN-02** (Built against the docs: `AddisScribe`, idempotent `request_id`, 202 polling, segments clamped to the chunk. **Verify with a real key**, then tick.)
+- [ ] `wiremock` contract tests built from recorded responses. Live tests gated behind `JIFAR_LIVE_TESTS=1`. (8 tests from documented shapes plus a gated live test. Swap in recorded live responses once a key is available.)
+- [x] API key stored in and read from the keyring (`keyring` crate). **FR-PRV-04** (`KeyringStore`, `jifar/addis-scribe`; `ApiKey` never prints the secret. CLI: `scribe set-key` / `key-status` / `clear-key`.)
 - [ ] `jifar-eval` Rust CLI: runs a provider over a directory of audio and writes hypotheses.
 - [ ] `tools/eval/` (Python + `jiwer`): WER/CER overall and by condition. Document the Qubee normalization rules (apostrophes, doubled letters, punctuation, case).
 - [ ] Collect the eval set: ≥ 2 h of consented Afaan Oromo meeting audio plus reference transcripts, stored **outside the repo**. *(Long lead time, so start during M0.)*

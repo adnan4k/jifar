@@ -68,14 +68,14 @@ Scribe's `request_id` is an idempotency key:
 
 So: **`request_id` = the `asr_jobs.id` (UUIDv7)**. A retry after a timeout or crash can never double-bill, and after a restart a job left `in_flight` can be recovered instead of re-sent. Re-transcription (FR-TRN-07) creates new jobs, so it gets new IDs.
 
-Slow requests: past about 75 s, `/transcribe` answers **202** with `poll_url` and `Retry-After`, and the result is polled from `GET /requests/{id}` (409 `IN_PROGRESS` until ready). Rare for 30 s chunks, but the provider must handle it.
+Slow requests: past about 75 s, `/transcribe` answers **202** with `poll_url` and `Retry-After`, and no transcript. Jifar doesn't poll. The provider returns `Retryable { retry_after }` and the **queue** retries later with the same `request_id`, getting either the finished result (not billed again) or 409 `IN_PROGRESS` (retryable again). This is rare for 30 s chunks, and it never ties up a transcription slot. The cost is re-uploading a ~1 MB chunk. (Decided 2026-11-11.)
 
 ## 5. Error classification (`ProviderError`, spec §6.5)
 
 | Response | Class | Notes |
 | -------- | ----- | ----- |
 | Network error, timeout | Retryable | Same `request_id` on retry |
-| 202 processing, 409 `IN_PROGRESS` | Retryable (poll) | Honour `Retry-After` |
+| 202 processing, 409 `IN_PROGRESS` | Retryable | Queue retries with the same `request_id`; honour `Retry-After` |
 | 409 `REQUEST_INTERRUPTED` | Retryable | Backend stayed busy |
 | 429 (`BUSY`, capacity, account protection) | Retryable | Exponential backoff; honour `Retry-After` if present. No `x-ratelimit-*` headers |
 | 500, 503 | Retryable | |
