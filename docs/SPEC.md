@@ -252,7 +252,7 @@ pub trait NotesProvider: Send + Sync {
 
 `ProviderError` separates `Retryable` (network, 5xx, 429) from `Permanent` (auth, bad input). The queue retries only `Retryable` errors.
 
-> **Open (OQ-1):** Addis Scribe API details (streaming vs. batch, auth, limits, per-segment timestamps, pricing) still need checking in the transcription PoC. If it returns no timestamps, use the chunk boundaries as segment times.
+> **OQ-1 (mostly resolved, see [`providers/addis-scribe.md`](./providers/addis-scribe.md)):** Addis Scribe `POST /api/v1/scribe/transcribe` is a batch upload (≤ 1 h / 95 MiB) with `x-api-key` auth, `language=om`, and word timestamps plus segments (`timestamps=word`). Its `request_id` is an idempotency key, set to the `asr_jobs.id`, so retries never double-bill. Price: 3.5 ETB per 1,000 transcript characters. **Still open:** data retention, and whether to add a `ProviderError::ActionRequired` class for bad keys and an empty wallet (proposal in the provider notes, §5). For providers without timestamps, chunk boundaries are used as segment times.
 
 ---
 
@@ -355,7 +355,7 @@ The task breakdown, sequencing and risks are in [`PLAN.md`](./PLAN.md). V1 = M0�
 
 | ID   | Question |
 | ---- | -------- |
-| OQ-1 | Addis Scribe: streaming support, timestamps, auth, rate limits, cost per hour, data retention policy. |
+| OQ-1 | Addis Scribe: ~~streaming support, timestamps, auth, rate limits, cost~~ answered in `providers/addis-scribe.md` (2026-11-11). **Open:** data retention / training use; `ActionRequired` error class. |
 | OQ-2 | Target WER/CER for V1, set after the M2 baseline. |
 | OQ-3 | Which LLM provider for V1 notes, and how well it handles Afaan Oromo. |
 | OQ-4 | Is WebRTC AEC good enough for mic bleed, or do we also need transcript-level dedupe? Measure in M1/M2. |

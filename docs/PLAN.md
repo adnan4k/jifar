@@ -81,7 +81,7 @@ Goal: record mic and system audio to separate, aligned, crash-safe Opus tracks f
 
 Goal: know how good Addis Scribe is on real Afaan Oromo meetings, behind the trait the app will use.
 
-- [ ] **Week 1: close OQ-1.** Get API access and document streaming vs. batch, auth, limits, timestamps, cost per hour and data retention in `docs/providers/addis-scribe.md`. Update spec §6.5/§12.
+- [ ] **Week 1: close OQ-1.** (Docs read 2026-11-11: `docs/providers/addis-scribe.md`. Left: data retention answer from Addis AI, live-API verification with a key, `ActionRequired` decision.) Get API access and document streaming vs. batch, auth, limits, timestamps, cost per hour and data retention in `docs/providers/addis-scribe.md`. Update spec §6.5/§12.
 - [ ] `AsrProvider`, `NotesProvider`, `ProviderError { Retryable, Permanent }`, plus domain types (`AudioChunk`, `RawSegment`, `LangCode`).
 - [ ] Addis Scribe implementation with correct error classification (network/5xx/429 → `Retryable`; auth/4xx → `Permanent`). If the API returns no timestamps, fall back to chunk boundaries. **FR-TRN-01, FR-TRN-02**
 - [ ] `wiremock` contract tests built from recorded responses. Live tests gated behind `JIFAR_LIVE_TESTS=1`.
