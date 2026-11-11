@@ -12,8 +12,10 @@ libpulse-binding = { version = "2.30", optional = true }
 libpulse-simple-binding = { version = "2.29", optional = true }
 ogg = "0.9"
 opus = "0.4"
+ort = { version = "2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "api-17"] }
 pipewire = { version = "0.10", optional = true }
 rtrb = "0.4"
+rubato = "5"
 thiserror.workspace = true
 tracing.workspace = true
 

@@ -48,7 +48,13 @@ jobs:
       - run: mkdir -p dist
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The VAD chunker loads ONNX Runtime at runtime (ort `load-dynamic`).
+      # JIFAR_REQUIRE_ORT makes the Silero tests fail instead of skipping.
+      - name: ONNX Runtime
+        run: echo "ORT_DYLIB_PATH=$(scripts/fetch-onnxruntime.sh)" >> "$GITHUB_ENV"
       - run: cargo nextest run --workspace
+        env:
+          JIFAR_REQUIRE_ORT: 1
       - name: Invariant — jifar-audio has no network deps
         run: scripts/check-deps.sh
       - name: IPC bindings are up to date

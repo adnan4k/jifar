@@ -45,6 +45,9 @@ sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
 
 # Node.js 24+ (pnpm comes via corepack)
 corepack enable
+
+# ONNX Runtime for the VAD chunker (loaded at runtime, not linked)
+export ORT_DYLIB_PATH=$(scripts/fetch-onnxruntime.sh)
 ```
 
 ### Run
@@ -61,7 +64,8 @@ pnpm dev            # UI only in a browser at http://localhost:1420, with mock d
 pnpm lint && pnpm build                            # Biome, tsc, Vite
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace                             # also regenerates src/bindings.ts
+cargo test --workspace                             # also regenerates src/bindings.ts;
+                                                   # Silero tests skip without ORT_DYLIB_PATH
 scripts/check-deps.sh                              # recording must not depend on network code
 ```
 

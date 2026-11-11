@@ -21,6 +21,10 @@ pub enum AudioError {
     WorkerPanicked,
     #[error("invalid recording session: {0}")]
     InvalidSession(String),
+    #[error("resampler error: {0}")]
+    Resample(String),
+    #[error("voice activity detection failed: {0}")]
+    Vad(String),
 }
 
 pub type Result<T, E = AudioError> = std::result::Result<T, E>;

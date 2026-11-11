@@ -136,7 +136,7 @@ Priority: **P0** = required for V1 release, **P1** = should ship with V1, **P2**
 | Audio capture | **`pipewire` crate** (native PipeWire streams); **`libpulse-binding`** fallback for PulseAudio-only systems | Direct access to sources and sink monitors, no subprocess |
 | Encoding | **libopus** via `opus` + `ogg` crates | Incremental Ogg/Opus writing, no FFmpeg at runtime |
 | Resampling / decoding | **`rubato`** / **`symphonia`** | Pure Rust |
-| VAD | **Silero VAD** via `ort` (ONNX Runtime) | Accurate chunk boundaries; `ort` is reused for local ASR later |
+| VAD | **Silero VAD** via `ort` (ONNX Runtime), model embedded in the binary | Accurate chunk boundaries; `ort` is reused for local ASR later. ONNX Runtime is loaded at runtime (`load-dynamic`, `ORT_DYLIB_PATH`), so no HTTP crate enters the build and a missing library can only fail chunking, never recording |
 | Echo cancellation | **`webrtc-audio-processing`** | Fixes mic bleed (FR-REC-10) |
 | Database | **SQLite** via `rusqlite` (bundled, FTS5) + `rusqlite_migration` | Synchronous, simple, fast. Runs on a dedicated DB thread |
 | HTTP | `reqwest` (rustls) | — |
@@ -210,7 +210,7 @@ Events (Rust → UI):
 
 - Capture is native PipeWire streams: one for the mic source, one for the default sink's monitor, at 48 kHz mono f32.
 - Archive files are `mic.opus` and `system.opus` (Ogg/Opus, ~32 kbps VOIP mode), written page by page.
-- For ASR, chunking runs **after recording stops** (D1), not in the capture pipeline. Each track's `.opus` is decoded and cut into chunks of ~15–30 s at Silero VAD silence boundaries (hard cap 30 s). Chunks are resampled to 16 kHz mono WAV with `rubato` and saved in `chunks/`. Chunks with no detected speech are not sent to ASR. Normal processing, crash recovery and re-transcription (FR-TRN-07) all use this same path.
+- For ASR, chunking runs **after recording stops** (D1), not in the capture pipeline. Each track's `.opus` is decoded and cut into chunks of ~15–30 s at Silero VAD silence boundaries (hard cap 30 s). Chunks are resampled to 16 kHz mono 16-bit WAV with `rubato` and saved in `chunks/`. Chunks with no detected speech (< 250 ms) are not written, so they are never sent to ASR, and long silences are trimmed to a ~300 ms pad around speech. Each chunk carries its `start_ms`/`end_ms` on the recording clock. Normal processing, crash recovery and re-transcription (FR-TRN-07) all use this same path.
 - AEC (P1) processes the mic track against the system track before encoding.
 - Both tracks share one monotonic clock that starts at `recording_start`. Every timestamp is in ms relative to that clock. Drift is measured, and corrected by resampling if it exceeds 20 ms.
 - `mixed.opus` is rendered in Rust on stop, for playback and export.
@@ -306,7 +306,7 @@ segments_fts / notes_fts  -- FTS5 external-content tables, unicode61 tokenizer
 
 | ID       | Requirement |
 | -------- | ----------- |
-| NFR-01   | Installs on Ubuntu 22.04/24.04 from `.deb` and AppImage. Runtime dependencies: PipeWire (or PulseAudio) and WebKitGTK 4.1. No Python or FFmpeg needed. |
+| NFR-01   | Installs on Ubuntu 22.04/24.04 from `.deb` and AppImage. Runtime dependencies: PipeWire (or PulseAudio) and WebKitGTK 4.1. ONNX Runtime (`libonnxruntime.so`) ships inside the packages. No Python or FFmpeg needed. |
 | NFR-02   | Recording a 2-hour meeting drops no audio (zero ring-buffer overruns). Audio CPU usage stays < 5% on a 4-core laptop. |
 | NFR-03   | App ready in < 2 s. Idle RAM < 150 MB. Search returns in < 300 ms across 500 meetings. |
 | NFR-04   | Losing the network or a panic in the audio worker never corrupts finished audio. The meeting is recovered to `processing`. |

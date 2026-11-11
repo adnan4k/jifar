@@ -239,8 +239,9 @@ fn run_loop(
             let bytes = &bytes[offset.min(end)..end];
             for block in bytes.chunks(rt.scratch.len() * 4) {
                 let n = block.len() / 4;
-                for (dst, src) in rt.scratch[..n].iter_mut().zip(block.chunks_exact(4)) {
-                    *dst = f32::from_le_bytes([src[0], src[1], src[2], src[3]]);
+                let (frames, _) = block.as_chunks::<4>();
+                for (dst, src) in rt.scratch[..n].iter_mut().zip(frames) {
+                    *dst = f32::from_le_bytes(*src);
                 }
                 rt.sink.push(&rt.scratch[..n]);
             }

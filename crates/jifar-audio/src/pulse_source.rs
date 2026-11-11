@@ -204,8 +204,9 @@ fn capture_loop(
             shared.fail(format!("read: {e}"));
             return;
         }
-        for (dst, src) in samples.iter_mut().zip(bytes.chunks_exact(BYTES_PER_SAMPLE)) {
-            *dst = f32::from_le_bytes([src[0], src[1], src[2], src[3]]);
+        let (frames, _) = bytes.as_chunks::<BYTES_PER_SAMPLE>();
+        for (dst, src) in samples.iter_mut().zip(frames) {
+            *dst = f32::from_le_bytes(*src);
         }
         sink.push(&samples);
     }
