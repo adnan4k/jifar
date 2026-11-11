@@ -21,6 +21,7 @@ struct Seen {
     silent: [bool; 2],
     faulted: [bool; 2],
     tray_second: Option<(u64, bool)>,
+    emit_failed: bool,
 }
 
 pub fn spawn(app: AppHandle, tray: Option<Tray>) {
@@ -47,13 +48,14 @@ fn tick(app: &AppHandle, tray: Option<&Tray>, live: Option<LiveStatus>, seen: &m
         return;
     };
     if seen.meeting.as_deref() != Some(&live.meeting_id) {
+        tracing::info!(meeting = %live.meeting_id, "live feed: sending audio://levels");
         *seen = Seen {
             meeting: Some(live.meeting_id.clone()),
             ..Seen::default()
         };
     }
 
-    let _ = AudioLevels {
+    let sent = AudioLevels {
         meeting_id: live.meeting_id.clone(),
         mic: live.mic.as_ref().and_then(|t| t.level_dbfs),
         system: live.system.as_ref().and_then(|t| t.level_dbfs),
@@ -61,6 +63,12 @@ fn tick(app: &AppHandle, tray: Option<&Tray>, live: Option<LiveStatus>, seen: &m
         paused: live.paused,
     }
     .emit(app);
+    if let Err(e) = sent
+        && !seen.emit_failed
+    {
+        seen.emit_failed = true;
+        tracing::warn!(error = %e, "live feed: could not emit audio://levels");
+    }
 
     for (i, (track, state)) in [(TrackDto::Mic, &live.mic), (TrackDto::System, &live.system)]
         .into_iter()

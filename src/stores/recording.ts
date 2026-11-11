@@ -291,7 +291,15 @@ export function connectRecording(): () => void {
     events.appError.listen(({ payload }) => store.setState({ notice: payload.message })),
   );
 
+  // A failed subscription (e.g. a missing event permission) would otherwise
+  // be an invisible rejected promise and a frozen timer.
+  const safe = unlisten.map((u) =>
+    u.catch((e: unknown) => {
+      store.setState({ notice: `Live recording updates unavailable: ${describeError(e)}` });
+      return () => {};
+    }),
+  );
   return () => {
-    for (const u of unlisten) void u.then((f) => f());
+    for (const u of safe) void u.then((f) => f());
   };
 }
