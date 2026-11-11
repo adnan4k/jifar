@@ -4,21 +4,22 @@
 
 use std::sync::Arc;
 
-use jifar_providers::addis::PROVIDER_ID as ADDIS_SCRIBE;
 use jifar_providers::{
-    ActionKind, AddisScribe, ApiKey, ApiKeyStore, KeyStoreError, KeyringStore, ProviderError,
+    ADDIS_AI_ACCOUNT, ActionKind, AddisScribe, ApiKey, ApiKeyStore, KeyStoreError, KeyringStore,
+    ProviderError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Provider {
-    AddisScribe,
+    /// Addis AI: one key for Scribe (transcription) and the notes LLM.
+    AddisAi,
 }
 
 impl Provider {
     /// Keyring account name.
     pub fn account(self) -> &'static str {
         match self {
-            Self::AddisScribe => ADDIS_SCRIBE,
+            Self::AddisAi => ADDIS_AI_ACCOUNT,
         }
     }
 }
@@ -155,10 +156,8 @@ mod tests {
     #[test]
     fn set_status_delete_without_revealing_the_key() {
         let k = keys();
-        assert!(!k.status(Provider::AddisScribe).saved);
-        let s = k
-            .set(Provider::AddisScribe, " sk_live_abcd1234 \n")
-            .unwrap();
+        assert!(!k.status(Provider::AddisAi).saved);
+        let s = k.set(Provider::AddisAi, " sk_live_abcd1234 \n").unwrap();
         assert_eq!(
             s,
             KeyStatus {
@@ -168,10 +167,10 @@ mod tests {
             }
         );
         assert!(matches!(
-            k.set(Provider::AddisScribe, "  "),
+            k.set(Provider::AddisAi, "  "),
             Err(KeyError::Empty)
         ));
-        assert!(!k.delete(Provider::AddisScribe).unwrap().saved);
+        assert!(!k.delete(Provider::AddisAi).unwrap().saved);
     }
 
     #[tokio::test]
@@ -191,25 +190,25 @@ mod tests {
             .await;
         let k = keys().with_base_url(&server.uri());
 
-        assert_eq!(k.test(Provider::AddisScribe).await, TestOutcome::NoKey);
-        k.set(Provider::AddisScribe, "sk_good").unwrap();
+        assert_eq!(k.test(Provider::AddisAi).await, TestOutcome::NoKey);
+        k.set(Provider::AddisAi, "sk_good").unwrap();
         assert_eq!(
-            k.test(Provider::AddisScribe).await,
+            k.test(Provider::AddisAi).await,
             TestOutcome::Ok {
                 balance: Some(50.0),
                 currency: Some("ETB".into())
             }
         );
-        k.set(Provider::AddisScribe, "sk_bad").unwrap();
+        k.set(Provider::AddisAi, "sk_bad").unwrap();
         assert!(matches!(
-            k.test(Provider::AddisScribe).await,
+            k.test(Provider::AddisAi).await,
             TestOutcome::InvalidKey(_)
         ));
 
         let offline = keys().with_base_url("http://127.0.0.1:9");
-        offline.set(Provider::AddisScribe, "sk_good").unwrap();
+        offline.set(Provider::AddisAi, "sk_good").unwrap();
         assert!(matches!(
-            offline.test(Provider::AddisScribe).await,
+            offline.test(Provider::AddisAi).await,
             TestOutcome::Unreachable(_)
         ));
     }

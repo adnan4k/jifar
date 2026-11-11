@@ -144,13 +144,14 @@ impl From<Settings> for CoreSettings {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderId {
-    AddisScribe,
+    /// Addis AI (transcription and notes share one key).
+    AddisAi,
 }
 
 impl From<ProviderId> for jifar_core::provider_keys::Provider {
     fn from(p: ProviderId) -> Self {
         match p {
-            ProviderId::AddisScribe => Self::AddisScribe,
+            ProviderId::AddisAi => Self::AddisAi,
         }
     }
 }

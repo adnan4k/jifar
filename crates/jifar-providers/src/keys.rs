@@ -11,6 +11,10 @@ use std::sync::Mutex;
 /// Keyring service name for all Jifar secrets.
 pub const SERVICE: &str = "jifar";
 
+/// Keyring account of the Addis AI key. One key serves every Addis AI
+/// product Jifar uses (Scribe transcription and the notes LLM).
+pub const ADDIS_AI_ACCOUNT: &str = "addis-ai";
+
 /// A secret API key. `Debug` and `Display` print only a redacted hint.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ApiKey(String);
@@ -47,7 +51,7 @@ pub enum KeyStoreError {
     Backend(String),
 }
 
-/// Where provider keys live. `account` is the provider ID (`addis-scribe`).
+/// Where provider keys live. `account` names the vendor key (`addis-ai`).
 pub trait ApiKeyStore: Send + Sync {
     fn get(&self, account: &str) -> Result<Option<ApiKey>, KeyStoreError>;
     fn set(&self, account: &str, key: &ApiKey) -> Result<(), KeyStoreError>;
@@ -138,11 +142,10 @@ mod tests {
     #[test]
     fn memory_store_roundtrip() {
         let s = MemoryKeyStore::default();
-        assert!(s.get("addis-scribe").unwrap().is_none());
-        s.set("addis-scribe", &ApiKey::new("sk_1").unwrap())
-            .unwrap();
-        assert_eq!(s.get("addis-scribe").unwrap().unwrap().expose(), "sk_1");
-        s.delete("addis-scribe").unwrap();
-        assert!(s.get("addis-scribe").unwrap().is_none());
+        assert!(s.get("addis-ai").unwrap().is_none());
+        s.set("addis-ai", &ApiKey::new("sk_1").unwrap()).unwrap();
+        assert_eq!(s.get("addis-ai").unwrap().unwrap().expose(), "sk_1");
+        s.delete("addis-ai").unwrap();
+        assert!(s.get("addis-ai").unwrap().is_none());
     }
 }

@@ -118,7 +118,7 @@ Priority: **P0** = required for V1 release, **P1** = should ship with V1, **P2**
 | FR-PRV-01  | P0  | No account, login or telemetry by default. |
 | FR-PRV-02  | P0  | All data is stored under the user's data directory (§7.1). |
 | FR-PRV-03  | P0  | Settings say plainly which data goes to which provider (audio → ASR, transcript text → LLM). |
-| FR-PRV-04  | P0  | API keys are stored in the OS keyring (Secret Service), never in plain-text config. Entries are service `jifar`, account = provider ID (e.g. `addis-scribe`). Keys are read per request, so a key added in Settings works without a restart. |
+| FR-PRV-04  | P0  | API keys are stored in the OS keyring (Secret Service), never in plain-text config. Entries are service `jifar`, one account per vendor key: `addis-ai` serves both Addis Scribe and the Addis LLM. Keys are read per request, so a key added in Settings works without a restart. |
 | FR-PRV-05  | P1  | "Local only" mode turns off all network providers. Recording and history still work. |
 
 ---
@@ -193,7 +193,7 @@ Commands (all `async`, returning `Result<T, AppError>`):
 | `export_meeting`       | `{meetingId, format, path}`                  | `()` |
 | `queue_retry`          | `{meetingId}`                                | `()`. Re-runs unfinished chunks; finished ones aren't sent again (idempotent request IDs) |
 | `settings_get` / `settings_set` | `Settings {micDevice?, sinkDevice?, language}` | `Settings` |
-| `provider_key_status`  | `{provider}` (`"addis_scribe"`)              | `{saved, hint?, keyringError?}`. The key itself never crosses IPC; `hint` is its last 4 characters |
+| `provider_key_status`  | `{provider}` (`"addis_ai"`)                  | `{saved, hint?, keyringError?}`. The key itself never crosses IPC; `hint` is its last 4 characters |
 | `provider_key_set`     | `{provider, key}`                            | `{saved, hint?, keyringError?}` (stored in the OS keyring, FR-PRV-04) |
 | `provider_key_delete`  | `{provider}`                                 | `{saved, hint?, keyringError?}` |
 | `provider_key_test`    | `{provider}`                                 | `{status: ok\|no_key\|invalid_key\|no_credits\|unreachable\|failed, message?, balance?, currency?}` (free, via `GET /scribe/usage`) |

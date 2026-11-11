@@ -7,9 +7,14 @@
 //!     cargo run -p jifar-providers --example scribe -- transcribe <file.wav> [--lang om]
 //!     ORT_DYLIB_PATH=$(scripts/fetch-onnxruntime.sh) \
 //!     cargo run -p jifar-providers --example scribe -- meeting <meeting-dir> [--lang om]
+//!     cargo run -p jifar-providers --example scribe -- notes <meeting-dir> [--lang om] [--out en]
+//!
+//! `notes` transcribes the meeting (free if already done) and asks the Addis
+//! AI LLM for notes in `--out` (default: the meeting language).
 //!
 //! The key is stored in the system keyring (service `jifar`, account
-//! `addis-scribe`), the same place the app reads it from. `set-key` echoes
+//! `addis-ai`), the same place the app reads it from, for transcription
+//! and notes alike. `set-key` echoes
 //! what you type; to keep the key off the screen, pipe it in instead:
 //! `printf %s "$KEY" | cargo run -p jifar-providers --example scribe -- set-key`.
 //!
@@ -21,9 +26,11 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use jifar_audio::{ChunkerConfig, SileroVad, Track, chunk_track};
-use jifar_providers::addis::PROVIDER_ID;
+use jifar_providers::ADDIS_AI_ACCOUNT as PROVIDER_ID;
+use jifar_providers::notes::NotesSegment;
 use jifar_providers::{
-    AddisScribe, ApiKey, ApiKeyStore, AsrProvider, AudioChunk, KeyringStore, LangCode, RawSegment,
+    AddisNotes, AddisScribe, ApiKey, ApiKeyStore, AsrProvider, AudioChunk, KeyringStore, LangCode,
+    NotesInput, NotesProvider, RawSegment,
 };
 
 #[tokio::main(flavor = "current_thread")]
@@ -68,12 +75,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some("meeting") => {
             let dir = PathBuf::from(args.get(1).ok_or("meeting <meeting-dir>")?);
-            transcribe_meeting(&dir, &lang, AddisScribe::new(Box::new(store))?).await?;
+            let all = transcribe_meeting(&dir, &lang, AddisScribe::new(Box::new(store))?).await?;
+            for (track, seg) in &all {
+                print_segments(std::slice::from_ref(seg), Some(*track));
+            }
+        }
+        Some("notes") => {
+            let dir = PathBuf::from(args.get(1).ok_or("notes <meeting-dir>")?);
+            let out = args
+                .iter()
+                .position(|a| a == "--out")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|l| LangCode::new(l))
+                .unwrap_or_else(|| lang.clone());
+            let all = transcribe_meeting(&dir, &lang, AddisScribe::new(Box::new(store))?).await?;
+            let input = NotesInput {
+                meeting_language: lang.clone(),
+                output_language: out,
+                segments: all
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (track, s))| NotesSegment {
+                        id: format!("seg-{i}"),
+                        speaker: if *track == Track::Mic { "Me" } else { "Others" }.into(),
+                        start_ms: s.start_ms,
+                        text: s.text.clone(),
+                    })
+                    .collect(),
+            };
+            eprintln!("asking the Addis AI LLM for notes…");
+            let notes = AddisNotes::new(Box::new(store))?.generate(&input).await?;
+            println!("{}", serde_json::to_string_pretty(&notes)?);
         }
         _ => {
             eprintln!(
                 "usage: scribe set-key | clear-key | key-status | transcribe <file.wav> [--lang om] \
-                 | meeting <meeting-dir> [--lang om]"
+                 | meeting <meeting-dir> [--lang om] | notes <meeting-dir> [--lang om] [--out en]"
             );
             std::process::exit(2);
         }
@@ -85,7 +122,7 @@ async fn transcribe_meeting(
     dir: &Path,
     lang: &LangCode,
     scribe: AddisScribe,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Vec<(Track, RawSegment)>, Box<dyn std::error::Error>> {
     let meeting_id = dir
         .file_name()
         .and_then(|n| n.to_str())
@@ -132,16 +169,13 @@ async fn transcribe_meeting(
         }
     }
     all.sort_by_key(|(t, s)| (s.start_ms, *t == Track::System));
-    for (track, seg) in &all {
-        print_segments(std::slice::from_ref(seg), Some(*track));
-    }
     let chars: usize = all.iter().map(|(_, s)| s.text.encode_utf16().count()).sum();
     eprintln!(
         "\n{} segments, {chars} characters (≈ {:.2} ETB at 3.5 ETB / 1,000), {failures} failed chunks",
         all.len(),
         chars as f64 * 3.5 / 1000.0
     );
-    Ok(())
+    Ok(all)
 }
 
 fn print_segments(segs: &[RawSegment], track: Option<Track>) {

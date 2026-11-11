@@ -9,13 +9,17 @@
 //! chunk before they leave this crate.
 
 pub mod addis;
+pub mod addis_notes;
 mod error;
 pub mod keys;
 pub mod notes;
 mod types;
 
 pub use addis::{AddisScribe, Usage};
+pub use addis_notes::AddisNotes;
 pub use error::{ActionKind, ProviderError};
-pub use keys::{ApiKey, ApiKeyStore, KeyStoreError, KeyringStore, MemoryKeyStore};
-pub use notes::{MeetingNotes, NotesInput, NotesProvider};
+pub use keys::{
+    ADDIS_AI_ACCOUNT, ApiKey, ApiKeyStore, KeyStoreError, KeyringStore, MemoryKeyStore,
+};
+pub use notes::{ActionItem, Decision, MeetingNotes, NotesInput, NotesProvider, NotesSegment};
 pub use types::{AsrProvider, AudioChunk, LangCode, RawSegment};

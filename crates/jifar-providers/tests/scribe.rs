@@ -301,7 +301,7 @@ async fn a_key_added_later_is_picked_up() {
         .with_base_url(&server.uri());
     assert!(c.transcribe(&chunk(&dir), &om()).await.is_err());
     store
-        .set("addis-scribe", &ApiKey::new("sk_added_later").unwrap())
+        .set("addis-ai", &ApiKey::new("sk_added_later").unwrap())
         .unwrap();
     assert_eq!(c.transcribe(&chunk(&dir), &om()).await.unwrap().len(), 2);
 }
@@ -318,7 +318,7 @@ async fn network_failure_is_retryable() {
 }
 
 /// Real API. Needs `JIFAR_LIVE_TESTS=1`, a key (`ADDIS_API_KEY` or the
-/// keyring entry `jifar/addis-scribe`) and `JIFAR_LIVE_WAV=<16 kHz WAV of
+/// keyring entry `jifar/addis-ai`) and `JIFAR_LIVE_WAV=<16 kHz WAV of
 /// Afaan Oromo speech>`. Costs a few ETB cents.
 #[tokio::test]
 async fn live_transcribes_afaan_oromo() {
@@ -329,8 +329,8 @@ async fn live_transcribes_afaan_oromo() {
     let key = std::env::var("ADDIS_API_KEY")
         .ok()
         .and_then(|k| ApiKey::new(&k))
-        .or_else(|| KeyringStore.get("addis-scribe").ok().flatten())
-        .expect("ADDIS_API_KEY or keyring entry jifar/addis-scribe");
+        .or_else(|| KeyringStore.get("addis-ai").ok().flatten())
+        .expect("ADDIS_API_KEY or keyring entry jifar/addis-ai");
     let wav = std::env::var("JIFAR_LIVE_WAV").expect("JIFAR_LIVE_WAV");
     let c = AddisScribe::with_key(key).unwrap();
     let chunk = AudioChunk {

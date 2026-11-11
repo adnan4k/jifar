@@ -106,7 +106,7 @@ function TranscriptionStatus({ meeting }: { meeting: MeetingDetail }) {
     const text =
       t.blocked === "credits"
         ? "Transcription is paused: your Addis AI balance is too low. Top up, then retry."
-        : "Transcription is paused: add a working Addis Scribe API key in Settings, then retry.";
+        : "Transcription is paused: add a working Addis AI API key in Settings, then retry.";
     return (
       <div className="flex items-center gap-3 border-b bg-warn/10 px-6 py-3 text-sm">
         <AlertTriangle className="size-4 shrink-0 text-warn" />

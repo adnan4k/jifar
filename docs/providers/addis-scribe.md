@@ -106,6 +106,15 @@ Error body: `{"status":"error","error":{"code":"…","message":"…","param":"�
 
 Addis AI also has an LLM, Addis-፩-አሌፍ: `POST /api/v1/chat_generate`, 128k context, 4,096-token max output, `target_language: "om"`, with Afaan Oromo "fully supported". It's a natural OQ-3 candidate: same key, same vendor, Oromo-first. Caveats: the docs list "structured output" as a use case but show **no JSON mode or schema parameter**, so `MeetingNotes` validation and retry (spec FR-AI) would carry the load. 4,096 output tokens is enough for notes. Pricing isn't on that page.
 
+### Implementation (2026-11-11): `AddisNotes` (`jifar-providers/src/addis_notes.rs`)
+
+- `POST /api/v1/chat_generate` with the documented REST body: `prompt`, `target_language` (the output language), `generation_config: {temperature: 0.2, maxOutputTokens: 4096}`. The same Addis AI key as Scribe (keyring `jifar/addis-ai`).
+- The transcript is sent as `[s12] Others 03:15: …` lines. Short IDs are mapped back to real segment IDs afterwards, and invented ones are dropped.
+- The answer is read from `response_text` or `choices[0].message.content` (the docs show both). `finish_reason: "content_filter"` counts as a permanent failure, never as empty notes.
+- Without a JSON mode: strict `MeetingNotes::parse`, then one retry quoting the exact error. If that also fails, a prose reply becomes a summary-only result; broken JSON fails.
+- Errors are classified as for Scribe (401/403/402 → `ActionRequired`, 429/5xx → `Retryable`).
+- To verify with a key: the real response shape, JSON reliability on Oromo meetings, and pricing (not on the docs page). CLI: `scribe notes <meeting-dir> [--out en]`.
+
 ## 9. Still open (OQ-1 remainder)
 
 1. **Data retention and privacy.** The docs say nothing about how long audio is kept or whether it's used for training. Results are kept at least 24 h for recovery. Needed for FR-PRV-03 and D7. Ask support@addisassistant.com.

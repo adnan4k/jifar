@@ -94,7 +94,7 @@ function Section({
   );
 }
 
-const keyStatusKey = ["providerKey", "addis_scribe"] as const;
+const keyStatusKey = ["providerKey", "addis_ai"] as const;
 
 function ApiKeySection() {
   const qc = useQueryClient();
@@ -105,17 +105,17 @@ function ApiKeySection() {
 
   const status = useQuery({
     queryKey: keyStatusKey,
-    queryFn: () => call(commands.providerKeyStatus("addis_scribe")),
+    queryFn: () => call(commands.providerKeyStatus("addis_ai")),
   });
 
   const runTest = useMutation({
-    mutationFn: () => call(commands.providerKeyTest("addis_scribe")),
+    mutationFn: () => call(commands.providerKeyTest("addis_ai")),
     onSuccess: setTest,
     onError: (e) => setError(describeError(e)),
   });
 
   const save = useMutation({
-    mutationFn: (key: string) => call(commands.providerKeySet("addis_scribe", key)),
+    mutationFn: (key: string) => call(commands.providerKeySet("addis_ai", key)),
     onSuccess: (s) => {
       qc.setQueryData(keyStatusKey, s);
       setDraft("");
@@ -128,7 +128,7 @@ function ApiKeySection() {
   });
 
   const remove = useMutation({
-    mutationFn: () => call(commands.providerKeyDelete("addis_scribe")),
+    mutationFn: () => call(commands.providerKeyDelete("addis_ai")),
     onSuccess: (s) => {
       qc.setQueryData(keyStatusKey, s);
       setTest(null);
@@ -143,7 +143,10 @@ function ApiKeySection() {
 
   const s = status.data;
   return (
-    <Section icon={<KeyRound className="size-4 text-accent" />} title="Transcription: Addis Scribe">
+    <Section
+      icon={<KeyRound className="size-4 text-accent" />}
+      title="Addis AI (transcription and notes)"
+    >
       {s?.keyringError ? (
         <p className="rounded-lg bg-warn/10 px-3 py-2 text-xs text-warn">
           The system keyring isn't available, so the key can't be stored safely: {s.keyringError}
@@ -156,7 +159,7 @@ function ApiKeySection() {
               <span className="font-mono text-fg">(…{s.hint})</span>.
             </>
           ) : (
-            "No API key yet. Get one at addisassistant.com/apikeys (it starts with sk_)."
+            "No API key yet. Get one at addisassistant.com/apikeys (it starts with sk_). The same key is used for transcription and notes."
           )}
         </p>
       )}
@@ -170,7 +173,7 @@ function ApiKeySection() {
           placeholder={s?.saved ? "Paste a new key to replace it" : "sk_…"}
           autoComplete="off"
           spellCheck={false}
-          aria-label="Addis Scribe API key"
+          aria-label="Addis AI API key"
           className="h-9 min-w-0 flex-1 rounded-lg border bg-bg px-3 font-mono text-sm outline-none placeholder:font-sans placeholder:text-muted focus-visible:ring-2 focus-visible:ring-accent/60"
         />
         <Button type="submit" disabled={!draft.trim() || save.isPending}>

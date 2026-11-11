@@ -22,7 +22,7 @@ use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
 use tracing::{debug, warn};
 
-use crate::keys::{ApiKeyStore, KeyStoreError};
+use crate::keys::{ADDIS_AI_ACCOUNT, ApiKeyStore, KeyStoreError};
 use crate::{ActionKind, ApiKey, AsrProvider, AudioChunk, LangCode, ProviderError, RawSegment};
 
 pub const PROVIDER_ID: &str = "addis-scribe";
@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_URL: &str = "https://api.addisassistant.com";
 /// Languages Scribe accepts (`language` query parameter).
 pub const LANGUAGES: [&str; 7] = ["am", "om", "ti", "ha", "sid", "wal", "sw"];
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Scribe answers 202 after ~75 s; leave room for the upload.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// Retry delay for a 202 that comes without `Retry-After`.
@@ -40,9 +40,32 @@ const END_SLACK_MS: i64 = 500;
 
 /// Where the provider gets its key. Read on every request, so a key added
 /// or fixed in Settings takes effect without a restart.
-enum KeySource {
+pub(crate) enum KeySource {
     Store(Box<dyn ApiKeyStore>),
     Fixed(ApiKey),
+}
+
+impl KeySource {
+    /// The Addis AI key (one key serves Scribe and the LLM).
+    pub(crate) fn resolve(&self) -> Result<ApiKey, ProviderError> {
+        match self {
+            KeySource::Fixed(k) => Ok(k.clone()),
+            KeySource::Store(store) => match store.get(ADDIS_AI_ACCOUNT) {
+                Ok(Some(k)) => Ok(k),
+                Ok(None) => Err(ProviderError::ActionRequired {
+                    kind: ActionKind::Auth,
+                    message: "no Addis AI API key is set".into(),
+                }),
+                // Locked or missing keyring: the user has to unlock or fix it.
+                Err(e @ (KeyStoreError::Unavailable(_) | KeyStoreError::Backend(_))) => {
+                    Err(ProviderError::ActionRequired {
+                        kind: ActionKind::Auth,
+                        message: format!("could not read the API key: {e}"),
+                    })
+                }
+            },
+        }
+    }
 }
 
 pub struct AddisScribe {
@@ -52,7 +75,7 @@ pub struct AddisScribe {
 }
 
 impl AddisScribe {
-    /// Uses the key stored under [`PROVIDER_ID`] in `store`.
+    /// Uses the Addis AI key ([`ADDIS_AI_ACCOUNT`]) from `store`.
     pub fn new(store: Box<dyn ApiKeyStore>) -> Result<Self, ProviderError> {
         Self::build(KeySource::Store(store), DEFAULT_BASE_URL)
     }
@@ -83,23 +106,7 @@ impl AddisScribe {
     }
 
     fn api_key(&self) -> Result<ApiKey, ProviderError> {
-        match &self.key {
-            KeySource::Fixed(k) => Ok(k.clone()),
-            KeySource::Store(store) => match store.get(PROVIDER_ID) {
-                Ok(Some(k)) => Ok(k),
-                Ok(None) => Err(ProviderError::ActionRequired {
-                    kind: ActionKind::Auth,
-                    message: "no Addis Scribe API key is set".into(),
-                }),
-                // Locked or missing keyring: the user has to unlock or fix it.
-                Err(e @ (KeyStoreError::Unavailable(_) | KeyStoreError::Backend(_))) => {
-                    Err(ProviderError::ActionRequired {
-                        kind: ActionKind::Auth,
-                        message: format!("could not read the API key: {e}"),
-                    })
-                }
-            },
-        }
+        self.key.resolve()
     }
 }
 
@@ -333,7 +340,7 @@ fn error_code(body: &str) -> (Option<String>, String) {
 
 /// Classifies a non-success response. Returns `Ok(())` only for statuses
 /// that aren't errors (callers treat that as unexpected).
-fn classify(
+pub(crate) fn classify(
     status: StatusCode,
     body: &str,
     retry_after: Option<Duration>,
@@ -359,7 +366,7 @@ fn classify(
     Err(match status.as_u16() {
         401 | 403 => ProviderError::ActionRequired {
             kind: ActionKind::Auth,
-            message: describe("the Addis Scribe API key was rejected"),
+            message: describe("the Addis AI API key was rejected"),
         },
         402 => ProviderError::ActionRequired {
             kind: ActionKind::Credits,
@@ -384,16 +391,16 @@ fn classify(
     })
 }
 
-fn network_error(e: reqwest::Error) -> ProviderError {
+pub(crate) fn network_error(e: reqwest::Error) -> ProviderError {
     // Timeouts, DNS, refused connections, dropped uploads: all transient.
     ProviderError::retryable(format!("network error: {e}"))
 }
 
-fn unexpected(status: StatusCode) -> ProviderError {
+pub(crate) fn unexpected(status: StatusCode) -> ProviderError {
     ProviderError::retryable(format!("unexpected HTTP {}", status.as_u16()))
 }
 
-fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+pub(crate) fn retry_after(headers: &HeaderMap) -> Option<Duration> {
     headers
         .get(RETRY_AFTER)?
         .to_str()
@@ -405,7 +412,7 @@ fn retry_after(headers: &HeaderMap) -> Option<Duration> {
 }
 
 /// `X-Request-Id` allows ≤ 128 of `[A-Za-z0-9._:-]`.
-fn request_header(id: &str) -> String {
+pub(crate) fn request_header(id: &str) -> String {
     id.chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
         .take(128)

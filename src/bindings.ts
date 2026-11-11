@@ -184,7 +184,9 @@ export type MeetingStatusChanged = {
 
 export type MeetingStatusDto = "recording" | "processing" | "ready" | "needs_attention";
 
-export type ProviderId = "addis_scribe";
+export type ProviderId = 
+/**  Addis AI (transcription and notes share one key). */
+"addis_ai";
 
 /**  Whether a key is saved. The key itself never crosses IPC. */
 export type ProviderKeyStatus = ProviderKeyStatus_Serialize | ProviderKeyStatus_Deserialize;

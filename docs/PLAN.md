@@ -85,7 +85,7 @@ Goal: know how good Addis Scribe is on real Afaan Oromo meetings, behind the tra
 - [x] `AsrProvider`, `NotesProvider`, `ProviderError { Retryable, ActionRequired, Permanent }`, plus domain types (`AudioChunk`, `RawSegment`, `LangCode`). (`NotesProvider` is the contract only, with a strict `MeetingNotes::parse`; the implementation is M4.)
 - [ ] Addis Scribe implementation with correct error classification (network/5xx/429 → `Retryable`; auth/4xx → `Permanent`). If the API returns no timestamps, fall back to chunk boundaries. **FR-TRN-01, FR-TRN-02** (Built against the docs: `AddisScribe`, idempotent `request_id`, 202 polling, segments clamped to the chunk. **Verify with a real key**, then tick.)
 - [ ] `wiremock` contract tests built from recorded responses. Live tests gated behind `JIFAR_LIVE_TESTS=1`. (8 tests from documented shapes plus a gated live test. Swap in recorded live responses once a key is available.)
-- [x] API key stored in and read from the keyring (`keyring` crate). **FR-PRV-04** (`KeyringStore`, `jifar/addis-scribe`; `ApiKey` never prints the secret. CLI: `scribe set-key` / `key-status` / `clear-key`.)
+- [x] API key stored in and read from the keyring (`keyring` crate). **FR-PRV-04** (`KeyringStore`, `jifar/addis-ai`, shared by transcription and notes; `ApiKey` never prints the secret. CLI: `scribe set-key` / `key-status` / `clear-key`.)
 - [ ] `jifar-eval` Rust CLI: runs a provider over a directory of audio and writes hypotheses.
 - [ ] `tools/eval/` (Python + `jiwer`): WER/CER overall and by condition. Document the Qubee normalization rules (apostrophes, doubled letters, punctuation, case).
 - [ ] Collect the eval set: ≥ 2 h of consented Afaan Oromo meeting audio plus reference transcripts, stored **outside the repo**. *(Long lead time, so start during M0.)*
@@ -121,7 +121,7 @@ UI:
 Goal: turn transcripts into useful notes, and make history searchable and exportable.
 
 - [ ] **Close OQ-3 first:** shortlist 2–3 LLMs, run them on ≥ 10 eval meetings with the §9 rubric, pick one.
-- [ ] `NotesProvider` implementation. Prompt produces `MeetingNotes` JSON. Strict serde validation, then retry, then degrade gracefully. Output in the meeting language, or English on request. **FR-AI-01, FR-AI-02, FR-AI-03**
+- [ ] `NotesProvider` implementation. Prompt produces `MeetingNotes` JSON. (Addis AI LLM candidate built 2026-11-11: `AddisNotes`, strict parse + retry + summary-only fallback, 5 contract tests; see `providers/addis-scribe.md` §8. Not yet wired to the UI, and not evaluated.) Strict serde validation, then retry, then degrade gracefully. Output in the meeting language, or English on request. **FR-AI-01, FR-AI-02, FR-AI-03**
 - [ ] Segment references in decisions and action items, rendered as links that jump to the transcript. **FR-AI-05**
 - [ ] Notes versioning: regenerating creates a new `ai` version, and user edits create a `user` version that is never overwritten. **FR-AI-04**
 - [ ] Transcript editing (`edited` flag, `original_text` kept). Re-processing skips edited segments unless the user confirms. **FR-TRN-05**
