@@ -67,6 +67,9 @@ struct RtState {
 pub struct PipeWireSource {
     name: String,
     target: CaptureTarget,
+    /// Node name to link to (see [`crate::AudioDevice`]); `None` lets the
+    /// session manager pick the default.
+    device: Option<String>,
     shared: Arc<Shared>,
     quit: Option<pw::channel::Sender<()>>,
     thread: Option<JoinHandle<()>>,
@@ -74,9 +77,16 @@ pub struct PipeWireSource {
 
 impl PipeWireSource {
     pub fn new(target: CaptureTarget) -> Self {
+        Self::with_device(target, None)
+    }
+
+    /// Records from a specific node (a source for the mic, a sink whose
+    /// monitor is recorded for system output). `None` uses the default.
+    pub fn with_device(target: CaptureTarget, device: Option<String>) -> Self {
         Self {
             name: target.node_name().to_owned(),
             target,
+            device,
             shared: Arc::default(),
             quit: None,
             thread: None,
@@ -108,11 +118,12 @@ impl CaptureSource for PipeWireSource {
         let (quit_tx, quit_rx) = pw::channel::channel::<()>();
         let (ready_tx, ready_rx) = mpsc::sync_channel::<std::result::Result<(), String>>(1);
         let target = self.target;
+        let device = self.device.clone();
         let shared = Arc::clone(&self.shared);
         let thread = thread::Builder::new()
             .name(format!("pw-loop:{}", self.name))
             .spawn(move || {
-                let result = run_loop(target, sink, shared, quit_rx, &ready_tx);
+                let result = run_loop(target, device, sink, shared, quit_rx, &ready_tx);
                 if let Err(msg) = result {
                     // Fails only if start() already timed out and left.
                     let _ = ready_tx.send(Err(msg));
@@ -170,6 +181,7 @@ impl Drop for PipeWireSource {
 /// reports success through `ready` and then runs until told to quit.
 fn run_loop(
     target: CaptureTarget,
+    device: Option<String>,
     sink: RtSink,
     shared: Arc<Shared>,
     quit: pw::channel::Receiver<()>,
@@ -195,6 +207,12 @@ fn run_loop(
     };
     if target == CaptureTarget::SystemOutput {
         props.insert(*pw::keys::STREAM_CAPTURE_SINK, "true");
+    }
+    if let Some(node) = device {
+        // Link to this node instead of the default. Callers validate it with
+        // `resolve_device` first, since a missing target silently falls
+        // back to the default here.
+        props.insert("target.object", node);
     }
     let stream = pw::stream::StreamBox::new(&core, target.node_name(), props)
         .map_err(|e| err("create stream", e))?;

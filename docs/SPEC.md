@@ -69,7 +69,7 @@ Priority: **P0** = required for V1 release, **P1** = should ship with V1, **P2**
 | FR-REC-04  | P0  | Record mic and system at the same time, to **separate, time-aligned tracks**. |
 | FR-REC-05  | P0  | Audio is written to disk incrementally, so a crash or power loss loses at most ~5 s. |
 | FR-REC-06  | P0  | A recording indicator stays visible the whole time a recording is active, including when the main window is hidden. |
-| FR-REC-07  | P1  | User can pick the input and output devices. The choice is remembered. |
+| FR-REC-07  | P1  | User can pick the input and output devices. The choice is remembered. Device IDs are audio-server node names, valid on PipeWire and PulseAudio and stable across reboots. A remembered device that is missing falls back to the system default with a notice; recording never refuses to start over it. |
 | FR-REC-08  | P1  | Live level meters for each track, with a warning when a track is silent for more than 30 s. Levels are RMS and peak dBFS over 100 ms of the audio written to the file (floored at −100 dBFS). Silence is RMS below −60 dBFS; a device that stops delivering counts as silent. Paused time is not counted. |
 | FR-REC-09  | P1  | Pause and resume. Paused time is cut out of the recording: both tracks continue seamlessly on resume, the recording clock stops while paused, and the pauses are listed so the UI can mark them. Devices stay open and their audio is discarded, so the recording indicator stays visible (shown as paused). |
 | FR-REC-10  | P1  | Echo cancellation on the mic track, using the system track as the reference, for users without headphones. |

@@ -13,6 +13,7 @@ use std::fmt;
 
 use tracing::info;
 
+use crate::device::AudioDevice;
 use crate::source::CaptureSource;
 use crate::{AudioError, Result};
 
@@ -92,21 +93,49 @@ impl Backend {
         Ok(backend)
     }
 
-    /// Creates a capture source for `target` on this backend.
-    pub fn open(self, target: CaptureTarget) -> Result<Box<dyn CaptureSource>> {
+    /// Creates a capture source for `target` on this backend. `device` is a
+    /// device ID from [`Self::list_devices`] (resolve a remembered one with
+    /// [`crate::resolve_device`] first); `None` records the system default.
+    pub fn open(
+        self,
+        target: CaptureTarget,
+        device: Option<&str>,
+    ) -> Result<Box<dyn CaptureSource>> {
+        let device = device.map(str::to_owned);
         match self {
             #[cfg(feature = "pipewire")]
-            Self::PipeWire => Ok(Box::new(crate::PipeWireSource::new(target))),
+            Self::PipeWire => Ok(Box::new(crate::PipeWireSource::with_device(target, device))),
             #[cfg(feature = "pulse")]
-            Self::PulseAudio => Ok(Box::new(crate::PulseSource::new(target))),
+            Self::PulseAudio => Ok(Box::new(crate::PulseSource::with_device(target, device))),
             #[allow(unreachable_patterns)]
             other => {
-                let _ = target;
+                let _ = (target, device);
                 Err(AudioError::Source(format!(
                     "{} backend not compiled into this build",
                     other.as_str()
                 )))
             }
+        }
+    }
+}
+
+impl Backend {
+    /// Inputs and outputs available for recording, with the current
+    /// defaults marked (FR-REC-07). Listed through the PulseAudio protocol,
+    /// which both real PulseAudio and pipewire-pulse speak, and whose names
+    /// are valid device IDs for either backend.
+    pub fn list_devices(self) -> Result<Vec<AudioDevice>> {
+        #[cfg(feature = "pulse")]
+        {
+            let _ = self;
+            crate::pulse_source::list_devices()
+        }
+        #[cfg(not(feature = "pulse"))]
+        {
+            Err(AudioError::Source(format!(
+                "device listing needs the `pulse` feature ({} backend)",
+                self.as_str()
+            )))
         }
     }
 }

@@ -6,8 +6,11 @@
 //!
 //!     cargo run -p jifar-audio --example record -- <dir> [--duration SECS]
 //!         [--mic-only | --system-only] [--backend pipewire|pulse]
-//!         [--pause AT:LEN]...
+//!         [--pause AT:LEN]... [--mic ID] [--output ID]
+//!     cargo run -p jifar-audio --example record -- --list-devices
 //!
+//! `--mic` / `--output` pick devices by the IDs `--list-devices` prints; a
+//! device that isn't there falls back to the default, with a notice.
 //! Stops on Ctrl-C or after `--duration` (wall time). `--pause 10:5` pauses
 //! 10 s after start for 5 s; it can be repeated. Prints a status line every
 //! 5 s.
@@ -20,7 +23,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use jifar_audio::{
-    Backend, CaptureSource, CaptureTarget, RecordingSession, SessionStatus, Track, TrackStatus,
+    Backend, CaptureSource, CaptureTarget, DeviceKind, RecordingSession, SessionStatus, Track,
+    TrackStatus, resolve_device,
 };
 
 const STATUS_EVERY: Duration = Duration::from_secs(5);
@@ -32,6 +36,9 @@ struct Args {
     backend: Option<Backend>,
     /// (start, length) of each pause, in wall time since start.
     pauses: Vec<(Duration, Duration)>,
+    mic: Option<String>,
+    output: Option<String>,
+    list_devices: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -40,6 +47,7 @@ fn parse_args() -> Result<Args, String> {
     let mut tracks = vec![Track::Mic, Track::System];
     let mut backend = None;
     let mut pauses = Vec::new();
+    let (mut mic, mut output, mut list_devices) = (None, None, false);
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -65,6 +73,9 @@ fn parse_args() -> Result<Args, String> {
                     .ok_or("--pause needs AT:LEN in seconds, e.g. 10:5")?;
                 pauses.push((Duration::from_secs(at), Duration::from_secs(len)));
             }
+            "--mic" => mic = Some(args.next().ok_or("--mic needs a device ID")?),
+            "--output" => output = Some(args.next().ok_or("--output needs a device ID")?),
+            "--list-devices" => list_devices = true,
             "--mic-only" => tracks = vec![Track::Mic],
             "--system-only" => tracks = vec![Track::System],
             "-h" | "--help" => return Err(String::new()),
@@ -72,12 +83,18 @@ fn parse_args() -> Result<Args, String> {
             s => dir = Some(PathBuf::from(s)),
         }
     }
+    if list_devices {
+        dir.get_or_insert_with(PathBuf::new);
+    }
     Ok(Args {
         dir: dir.ok_or("missing output directory")?,
         duration,
         tracks,
         backend,
         pauses,
+        mic,
+        output,
+        list_devices,
     })
 }
 
@@ -97,7 +114,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             eprintln!(
                 "usage: record <dir> [--duration SECS] [--mic-only | --system-only] \
-                 [--backend pipewire|pulse] [--pause AT:LEN]..."
+                 [--backend pipewire|pulse] [--pause AT:LEN]... [--mic ID] [--output ID]\n       \
+                 record --list-devices"
             );
             std::process::exit(2);
         }
@@ -113,13 +131,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(b) => b,
         None => Backend::detect()?,
     };
+    if args.list_devices {
+        let devices = backend.list_devices()?;
+        for (kind, title) in [
+            (DeviceKind::Input, "inputs (--mic)"),
+            (DeviceKind::Output, "outputs (--output)"),
+        ] {
+            println!("{title}:");
+            for d in devices.iter().filter(|d| d.kind == kind) {
+                let mark = if d.is_default { "*" } else { " " };
+                println!("  {mark} {}\n      {}", d.description, d.id);
+            }
+        }
+        println!("(* = system default)");
+        return Ok(());
+    }
+
+    let wanted_any = args.mic.is_some() || args.output.is_some();
+    let devices = if wanted_any {
+        backend.list_devices()?
+    } else {
+        Vec::new()
+    };
     let mut sources: Vec<(Track, Box<dyn CaptureSource>)> = Vec::new();
     for &t in &args.tracks {
-        let target = match t {
-            Track::Mic => CaptureTarget::Microphone,
-            Track::System => CaptureTarget::SystemOutput,
+        let (target, wanted) = match t {
+            Track::Mic => (CaptureTarget::Microphone, args.mic.as_deref()),
+            Track::System => (CaptureTarget::SystemOutput, args.output.as_deref()),
         };
-        sources.push((t, backend.open(target)?));
+        let choice = resolve_device(&devices, target, wanted);
+        if let Some(missing) = &choice.fell_back_from {
+            println!(
+                "  {}: device {missing:?} not found, using the default",
+                t.as_str()
+            );
+        }
+        if let Some(id) = &choice.id {
+            println!("  {}: {id}", t.as_str());
+        }
+        sources.push((t, backend.open(target, choice.id.as_deref())?));
     }
 
     let mut session = RecordingSession::start(&args.dir, sources)?;

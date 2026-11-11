@@ -23,6 +23,7 @@
 
 mod backend;
 mod chunker;
+mod device;
 mod drift;
 mod error;
 mod fake;
@@ -42,6 +43,7 @@ mod vad;
 
 pub use backend::{Backend, CaptureTarget};
 pub use chunker::{Chunk, ChunkReport, ChunkerConfig, chunk_file_name, chunk_track};
+pub use device::{AudioDevice, DeviceChoice, DeviceKind, resolve_device};
 pub use error::{AudioError, Result};
 pub use fake::{FakeSource, Pacing};
 pub use level::{LEVEL_WINDOW, Level, MIN_DBFS, SILENCE_DBFS, SILENCE_WARNING_MS, to_dbfs};
