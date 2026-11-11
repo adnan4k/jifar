@@ -141,11 +141,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
         match &t.outcome {
             Ok(stats) => println!(
-                "  {:<6} {}: {:.1} s, {} overrun samples, {offset}",
+                "  {:<6} {}: {:.1} s, {} overrun samples, drift correction {:+} ms \
+                 ({} ms stall silence), {offset}",
                 t.track.as_str(),
                 t.path.display(),
                 stats.duration_ms as f64 / 1000.0,
-                stats.overrun_samples
+                stats.overrun_samples,
+                stats.drift_correction_ms,
+                stats.silence_inserted_ms
             ),
             Err(e) => println!("  {:<6} {}: ERROR {e}", t.track.as_str(), t.path.display()),
         }
@@ -161,8 +164,13 @@ fn print_status(status: &SessionStatus) {
     for t in &status.tracks {
         line.push_str(&format!("  {}", track_status(t)));
     }
-    if let Some(d) = status.inter_track_drift_ms() {
-        line.push_str(&format!("  | mic-system drift {d:+.1} ms"));
+    if let (Some(d), Some(r)) = (
+        status.inter_track_drift_ms(),
+        status.inter_track_residual_ms(),
+    ) {
+        line.push_str(&format!(
+            "  | mic-system drift {d:+.1} ms, after correction {r:+.1} ms"
+        ));
     }
     println!("{line}");
     for t in &status.tracks {
@@ -179,9 +187,10 @@ fn track_status(t: &TrackStatus) -> String {
     let secs = t.samples_written as f64 / f64::from(jifar_audio::SAMPLE_RATE);
     match t.drift_ms {
         Some(drift) => format!(
-            "{} {secs:.1}s ovr={} drift={drift:+.1}ms",
+            "{} {secs:.1}s ovr={} drift={drift:+.1}ms corr={:+.1}ms",
             t.track.as_str(),
-            t.overrun_samples
+            t.overrun_samples,
+            t.drift_correction_ms
         ),
         None => format!("{} waiting for audio", t.track.as_str()),
     }

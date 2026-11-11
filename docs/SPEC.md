@@ -212,7 +212,7 @@ Events (Rust → UI):
 - Archive files are `mic.opus` and `system.opus` (Ogg/Opus, ~32 kbps VOIP mode), written page by page.
 - For ASR, chunking runs **after recording stops** (D1), not in the capture pipeline. Each track's `.opus` is decoded and cut into chunks of ~15–30 s at Silero VAD silence boundaries (hard cap 30 s). Chunks are resampled to 16 kHz mono 16-bit WAV with `rubato` and saved in `chunks/`. Chunks with no detected speech (< 250 ms) are not written, so they are never sent to ASR, and long silences are trimmed to a ~300 ms pad around speech. Each chunk carries its `start_ms`/`end_ms` on the recording clock. Normal processing, crash recovery and re-transcription (FR-TRN-07) all use this same path.
 - AEC (P1) processes the mic track against the system track before encoding.
-- Both tracks share one monotonic clock that starts at `recording_start`. Every timestamp is in ms relative to that clock. Drift is measured, and corrected by resampling if it exceeds 20 ms.
+- Both tracks share one monotonic clock that starts at `recording_start`. Every timestamp is in ms relative to that clock. Each track's drift against that clock is measured on the encoder worker (lower envelope of wall time minus delivered audio, so delivery jitter is ignored). Above 20 ms it is corrected by rate matching (rubato `Slip`: single frames inserted or dropped behind a crossfade, ≤ 0.5%, no delay, bit-exact pass-through while idle) until the error is below 2 ms. Device stalls (a persistent step > 250 ms) are filled with silence instead. Faster-than-real-time sources (fixtures, offline encoding) are never corrected.
 - `mixed.opus` is rendered in Rust on stop, for playback and export.
 
 ### 6.4 Transcription queue and recovery

@@ -10,8 +10,8 @@
 //!   capture path.
 //!
 //! Pipeline per track:
-//! [`CaptureSource`] → [`RtSink`] (lock-free ring) → worker thread →
-//! [`OggOpusWriter`] → [`DurableFile`], orchestrated by [`TrackRecorder`].
+//! [`CaptureSource`] → [`RtSink`] (lock-free ring) → worker thread (drift
+//! correction) → [`OggOpusWriter`] → [`DurableFile`], orchestrated by [`TrackRecorder`].
 //! A [`RecordingSession`] runs the `mic` and `system` tracks on one clock.
 //!
 //! After stop, [`chunk_track`] turns each archive into 16 kHz ASR chunks
@@ -23,6 +23,7 @@
 
 mod backend;
 mod chunker;
+mod drift;
 mod error;
 mod fake;
 mod opus_reader;

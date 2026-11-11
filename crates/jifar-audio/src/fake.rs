@@ -21,8 +21,15 @@ pub enum Pacing {
     /// samples and counts overruns, exactly as a device callback would.
     Realtime,
     /// As fast as the worker drains, waiting while the ring is full. Never
-    /// overruns. Useful for fast tests and offline encoding.
+    /// overruns. Useful for fast tests and offline encoding. Not real time,
+    /// so no drift correction is applied.
     Lossless,
+    /// Like `Realtime`, with a device clock that is `ppm` parts per million
+    /// slow (positive) or fast (negative).
+    Drifting { ppm: i32 },
+    /// Like `Realtime`, but delivery stops for `for_ms` after `after_ms` of
+    /// audio, like a device hiccup. The audio itself is not lost.
+    Stalling { after_ms: u64, for_ms: u64 },
 }
 
 pub struct FakeSource {
@@ -103,15 +110,26 @@ impl CaptureSource for FakeSource {
                     if stop.load(Ordering::Relaxed) {
                         break;
                     }
-                    match pacing {
-                        Pacing::Realtime => {
-                            let due = started + Duration::from_millis(10 * i as u64);
+                    let audio_ms = 10 * i as u64;
+                    let due_us = match pacing {
+                        Pacing::Realtime => Some(audio_ms * 1000),
+                        Pacing::Drifting { ppm } => {
+                            Some((audio_ms as f64 * 1000.0 * (1.0 + f64::from(ppm) / 1e6)) as u64)
+                        }
+                        Pacing::Stalling { after_ms, for_ms } => {
+                            Some((audio_ms + if audio_ms >= after_ms { for_ms } else { 0 }) * 1000)
+                        }
+                        Pacing::Lossless => None,
+                    };
+                    match due_us {
+                        Some(us) => {
+                            let due = started + Duration::from_micros(us);
                             if let Some(wait) = due.checked_duration_since(Instant::now()) {
                                 thread::sleep(wait);
                             }
                             sink.push(block);
                         }
-                        Pacing::Lossless => {
+                        None => {
                             let mut rest = block;
                             while !rest.is_empty() && !stop.load(Ordering::Relaxed) {
                                 if sink.is_abandoned() {
@@ -144,6 +162,10 @@ impl CaptureSource for FakeSource {
 
     fn is_finished(&self) -> bool {
         self.finished.load(Ordering::Acquire)
+    }
+
+    fn is_realtime(&self) -> bool {
+        self.pacing != Pacing::Lossless
     }
 }
 

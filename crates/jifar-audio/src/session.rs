@@ -6,10 +6,11 @@
 //! that clock, so the tracks can be aligned later and every timestamp stays in
 //! integer ms from the start.
 //!
-//! Drift is measured, not corrected yet: per track it is the wall-clock time
-//! since its first sample minus the audio time the device has delivered. The
-//! difference between the two tracks is what matters for alignment (SPEC: fix
-//! by resampling above 20 ms; that correction comes later).
+//! Drift: per track, the wall-clock time since its first sample minus the
+//! audio time the device has delivered. Each track's worker corrects its own
+//! drift against this clock once it exceeds 20 ms (see the `drift` module),
+//! so what remains between the tracks, [`SessionStatus::inter_track_residual_ms`],
+//! stays within that bound.
 //!
 //! Tracks are independent. If one fails to start or dies mid-recording, the
 //! other keeps recording and the failure is reported, never hidden.
@@ -60,8 +61,12 @@ pub struct TrackStatus {
     /// `None` until the device delivers audio.
     pub start_offset_ms: Option<i64>,
     /// Wall-clock time minus delivered audio time since the first sample.
-    /// Positive: the device is running slow or holding audio back.
+    /// Positive: the device is running slow or holding audio back. Raw, so
+    /// it includes delivery jitter.
     pub drift_ms: Option<f64>,
+    /// Net audio added (positive) or removed so far to hold the track to the
+    /// session clock (drift correction and stall silence).
+    pub drift_correction_ms: f64,
     /// False if the encoder worker stopped early.
     pub healthy: bool,
     /// Fault reported by the capture source.
@@ -88,6 +93,17 @@ impl SessionStatus {
         let mic = self.track(Track::Mic)?.drift_ms?;
         let system = self.track(Track::System)?.drift_ms?;
         Some(mic - system)
+    }
+
+    /// How far apart the tracks are in the files, after drift correction:
+    /// [`Self::inter_track_drift_ms`] minus the corrections applied.
+    pub fn inter_track_residual_ms(&self) -> Option<f64> {
+        let mic = self.track(Track::Mic)?;
+        let system = self.track(Track::System)?;
+        Some(
+            (mic.drift_ms? - mic.drift_correction_ms)
+                - (system.drift_ms? - system.drift_correction_ms),
+        )
     }
 }
 
@@ -201,6 +217,7 @@ impl RecordingSession {
                             stats.delivered_samples() as f64 * 1000.0 / f64::from(SAMPLE_RATE);
                         wall_ms - audio_ms
                     }),
+                    drift_correction_ms: t.recorder.drift_correction_ms(),
                     healthy: t.recorder.is_healthy(),
                     source_error: t.recorder.source_error(),
                 }

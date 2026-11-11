@@ -170,3 +170,57 @@ fn drift_is_reported_against_the_session_clock() {
     assert!(drift.abs() < 50.0, "drift {drift} ms");
     assert!(session.stop().is_clean());
 }
+
+#[test]
+fn device_stall_is_filled_so_tracks_stay_aligned() {
+    let dir = tempfile::tempdir().unwrap();
+    let meeting = dir.path().join("meeting");
+    // Mic hiccups for 600 ms after 2.5 s; the system track keeps time. The
+    // stall is detected one 2 s envelope window after it ends (~5.1 s).
+    let mic = FakeSource::from_samples(
+        "mic",
+        sine(300.0, 7.0),
+        Pacing::Stalling {
+            after_ms: 2_500,
+            for_ms: 600,
+        },
+    );
+    let system = FakeSource::from_samples("system", sine(500.0, 9.0), Pacing::Realtime);
+    let session = RecordingSession::start(
+        &meeting,
+        vec![
+            (Track::Mic, Box::new(mic) as Box<dyn CaptureSource>),
+            (Track::System, Box::new(system)),
+        ],
+    )
+    .unwrap();
+    // Compare while both tracks are still live.
+    thread::sleep(Duration::from_millis(6_000));
+    let st = session.status();
+    let residual = st.inter_track_residual_ms().unwrap();
+    let written = |t| st.track(t).unwrap().samples_written as i64;
+    let gap_ms = (written(Track::Mic) - written(Track::System)) * 1000 / i64::from(SAMPLE_RATE);
+    // The mic needs 7.6 s of wall time to deliver its 7 s.
+    thread::sleep(Duration::from_millis(1_800));
+    let summary = session.stop();
+
+    let mic = summary
+        .tracks
+        .iter()
+        .find(|t| t.track == Track::Mic)
+        .unwrap();
+    let stats = mic.outcome.as_ref().unwrap();
+    assert!(
+        (500..=700).contains(&stats.silence_inserted_ms),
+        "stall silence {} ms",
+        stats.silence_inserted_ms
+    );
+    // The mic file covers the wall-clock span, stall included.
+    let decoded = decode(&mic.path);
+    let mic_ms = decoded.len() as i64 * 1000 / i64::from(SAMPLE_RATE);
+    assert!(mic_ms >= 7_500, "mic file only {mic_ms} ms");
+    // Same amount of audio on both tracks for the same wall time.
+    assert!(gap_ms.abs() <= 20, "files {gap_ms:+} ms apart");
+    // Raw drift includes delivery jitter, so this bound is looser.
+    assert!(residual.abs() < 50.0, "tracks {residual:+.1} ms apart");
+}

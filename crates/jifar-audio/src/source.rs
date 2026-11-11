@@ -26,6 +26,14 @@ pub trait CaptureSource: Send {
         false
     }
 
+    /// True if samples arrive at the device's real rate, so wall time and
+    /// delivered audio can be compared. Drift correction only runs for
+    /// real-time sources; faster-than-real-time feeds (offline encoding,
+    /// fixtures) are written untouched.
+    fn is_realtime(&self) -> bool {
+        true
+    }
+
     /// A fault the source hit while running (stream error, device removed,
     /// unexpected format). Capture may have stopped; samples already pushed
     /// are still encoded. `None` while healthy.
