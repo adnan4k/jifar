@@ -4,8 +4,10 @@
 //! Scope is deliberately narrow and read-only: only `mixed.opus`,
 //! `mic.opus` and `system.opus` inside `meetings/<uuid>/`. Requests look like
 //! `jifar-audio://localhost/<meetingId>%2F<file>` (from `convertFileSrc`).
-//! HTTP range requests are honoured so the player can seek (WebKitGTK uses
-//! them for media).
+//! HTTP range requests are honoured. The UI fetches the file and plays it
+//! from a `blob:` URL: WebKitGTK's media pipeline (GStreamer) can't load
+//! custom schemes itself, but `fetch` can. The response is CORS-readable;
+//! custom schemes are reachable only from this app's WebView.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -33,8 +35,10 @@ pub fn handle<R: Runtime>(
 
 fn serve(meetings_dir: &std::path::Path, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
     let Some(path) = resolve(meetings_dir, request.uri().path()) else {
+        tracing::debug!(path = request.uri().path(), "audio request out of scope");
         return status(StatusCode::NOT_FOUND);
     };
+    tracing::debug!(file = %path.display(), "serving meeting audio");
     let Ok(mut file) = File::open(&path) else {
         return status(StatusCode::NOT_FOUND);
     };
@@ -60,7 +64,8 @@ fn serve(meetings_dir: &std::path::Path, request: &Request<Vec<u8>>) -> Response
         .header(header::CONTENT_TYPE, "audio/ogg")
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CONTENT_LENGTH, len.to_string())
-        .header(header::CACHE_CONTROL, "no-store");
+        .header(header::CACHE_CONTROL, "no-store")
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*");
     if partial {
         res = res
             .status(StatusCode::PARTIAL_CONTENT)

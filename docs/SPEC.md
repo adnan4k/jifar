@@ -168,7 +168,7 @@ Priority: **P0** = required for V1 release, **P1** = should ship with V1, **P2**
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **WebView** shows the UI only. It has no direct filesystem or network access. Tauri capabilities allow only Jifar's own commands, and a strict CSP is set. The one exception is audio playback: the read-only `jifar-audio://` URI scheme serves `mixed.opus`, `mic.opus` and `system.opus` from `meetings/<uuid>/` (nothing else), with HTTP range support for seeking. CSP `media-src` allows only that scheme.
+- **WebView** shows the UI only. It has no direct filesystem or network access. Tauri capabilities allow only Jifar's own commands, and a strict CSP is set. The one exception is audio playback: the read-only `jifar-audio://` URI scheme serves `mixed.opus`, `mic.opus` and `system.opus` from `meetings/<uuid>/` (nothing else), with HTTP range support. The UI fetches the file and plays it from a `blob:` URL (WebKitGTK's GStreamer media pipeline can't load custom schemes directly); CSP allows the scheme only in `connect-src` and `blob:` only in `media-src`.
 - **Rust core** owns everything else. Only `jifar-providers` may make network calls.
 - **Audio real-time rule:** PipeWire callbacks only copy samples into a lock-free SPSC ring buffer (`rtrb`). They never allocate, lock, do I/O or log. A separate worker thread does encoding, AEC, level metering and file writes. VAD and chunking run offline after stop (§6.3).
 - **Crash safety:** a panic in the audio worker is caught. The recording is finalized from what is already on disk, and the meeting moves to `needs_attention`. It never takes down the app silently.

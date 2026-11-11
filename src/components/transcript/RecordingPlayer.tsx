@@ -1,6 +1,6 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { AlertTriangle, Pause, Play } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { AlertTriangle, Loader2, Pause, Play } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { isTauri } from "@/lib/platform";
 import { cn, formatTimestamp } from "@/lib/utils";
@@ -8,9 +8,12 @@ import { cn, formatTimestamp } from "@/lib/utils";
 const BARS = 120;
 
 /**
- * Plays a real recording's `mixed.opus` through the `jifar-audio://` scheme
- * and shows its waveform; click the waveform to seek. Render it with
- * `key={meetingId}` so switching meetings starts fresh.
+ * Plays a real recording's `mixed.opus` and shows its waveform; click the
+ * waveform to seek. Render it with `key={meetingId}` so switching meetings
+ * starts fresh.
+ *
+ * The file is fetched from the `jifar-audio://` scheme and played from a
+ * `blob:` URL: WebKitGTK's media pipeline can't read custom schemes directly.
  */
 export function RecordingPlayer({
   meetingId,
@@ -24,12 +27,30 @@ export function RecordingPlayer({
   const audio = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [positionMs, setPositionMs] = useState(0);
-  const [failed, setFailed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [mediaMs, setMediaMs] = useState<number | null>(null);
-  const src = useMemo(
-    () => (isTauri() ? convertFileSrc(`${meetingId}/mixed.opus`, "jifar-audio") : undefined),
-    [meetingId],
-  );
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let url: string | null = null;
+    let cancelled = false;
+    fetch(convertFileSrc(`${meetingId}/mixed.opus`, "jifar-audio"))
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`the audio file could not be read (HTTP ${res.status})`);
+        const blob = new Blob([await res.arrayBuffer()], { type: "audio/ogg" });
+        if (cancelled) return;
+        url = URL.createObjectURL(blob);
+        setBlobUrl(url);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [meetingId]);
   const totalMs = mediaMs ?? durationMs;
   const bars = useMemo(() => resample(peaks ?? [], BARS), [peaks]);
   const progress = totalMs > 0 ? positionMs / totalMs : 0;
@@ -38,7 +59,9 @@ export function RecordingPlayer({
     const el = audio.current;
     if (!el) return;
     if (el.paused) {
-      el.play().catch(() => setFailed(true));
+      el.play().catch((e: unknown) =>
+        setError(`playback was refused: ${e instanceof Error ? e.message : String(e)}`),
+      );
     } else {
       el.pause();
     }
@@ -51,14 +74,14 @@ export function RecordingPlayer({
     setPositionMs(fraction * totalMs);
   };
 
-  if (!src) return null;
+  if (!isTauri()) return null;
 
   return (
     <div className="w-full space-y-3 rounded-xl bg-card p-4">
       {/* biome-ignore lint/a11y/useMediaCaption: meeting audio has no caption track; the transcript is the text alternative */}
       <audio
         ref={audio}
-        src={src}
+        src={blobUrl ?? undefined}
         preload="metadata"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
@@ -68,7 +91,7 @@ export function RecordingPlayer({
           const d = e.currentTarget.duration;
           if (Number.isFinite(d) && d > 0) setMediaMs(d * 1000);
         }}
-        onError={() => setFailed(true)}
+        onError={(e) => setError(mediaErrorText(e.currentTarget.error))}
       />
       <button
         type="button"
@@ -96,23 +119,42 @@ export function RecordingPlayer({
           size="icon"
           className="rounded-full"
           onClick={toggle}
-          disabled={failed}
+          disabled={!blobUrl || error !== null}
           aria-label={playing ? "Pause" : "Play"}
         >
-          {playing ? <Pause /> : <Play />}
+          {!blobUrl && !error ? (
+            <Loader2 className="animate-spin" />
+          ) : playing ? (
+            <Pause />
+          ) : (
+            <Play />
+          )}
         </Button>
         <span className="text-xs text-muted tabular-nums">
           {formatTimestamp(positionMs)} / {formatTimestamp(totalMs)}
         </span>
-        {failed && (
-          <span className="flex items-center gap-1.5 text-xs text-warn">
-            <AlertTriangle className="size-3.5" />
-            Can't play this audio here. Ogg/Opus playback needs the GStreamer base and good plugins.
+        {error && (
+          <span className="flex items-center gap-1.5 text-left text-xs text-warn">
+            <AlertTriangle className="size-3.5 shrink-0" />
+            Can't play this recording: {error}
           </span>
         )}
       </div>
     </div>
   );
+}
+
+function mediaErrorText(err: MediaError | null): string {
+  switch (err?.code) {
+    case MediaError.MEDIA_ERR_DECODE:
+      return "the audio could not be decoded (GStreamer Opus support missing?)";
+    case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+      return "Ogg/Opus isn't supported here (install gstreamer1.0-plugins-base and -good)";
+    case MediaError.MEDIA_ERR_NETWORK:
+      return "the audio stopped loading";
+    default:
+      return err?.message || "unknown media error";
+  }
 }
 
 /** Max-pools (or pads) `peaks` to `n` bars. Flat bars if there's no data. */
