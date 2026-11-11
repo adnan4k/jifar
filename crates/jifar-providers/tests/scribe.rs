@@ -352,3 +352,39 @@ async fn live_transcribes_afaan_oromo() {
     }
     assert!(!segs.is_empty(), "no speech recognized");
 }
+
+#[tokio::test]
+async fn usage_checks_the_key_and_reads_the_balance() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/scribe/usage"))
+        .and(header("x-api-key", "sk_test_123"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"data":{"rate":3.5,"balance":1240.5,"currency":"ETB"}}"#),
+        )
+        .mount(&server)
+        .await;
+    let u = client(&server).usage().await.unwrap();
+    assert_eq!(u.balance, Some(1240.5));
+    assert_eq!(u.currency.as_deref(), Some("ETB"));
+
+    let bad = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(401).set_body_string(
+            r#"{"status":"error","error":{"code":"invalid_api_key","message":"Invalid or expired API key."}}"#,
+        ))
+        .mount(&bad)
+        .await;
+    let e = client(&bad).usage().await.unwrap_err();
+    assert!(
+        matches!(
+            e,
+            ProviderError::ActionRequired {
+                kind: ActionKind::Auth,
+                ..
+            }
+        ),
+        "{e}"
+    );
+}

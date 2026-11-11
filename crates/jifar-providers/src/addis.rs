@@ -103,6 +103,65 @@ impl AddisScribe {
     }
 }
 
+/// Account state from `GET /api/v1/scribe/usage`. The docs don't show this
+/// response, so fields are optional and read leniently.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Usage {
+    pub balance: Option<f64>,
+    pub currency: Option<String>,
+}
+
+impl AddisScribe {
+    /// Checks the key and returns the account balance. Free; used by the
+    /// Settings "Test" button. Errors are classified like `transcribe`'s.
+    pub async fn usage(&self) -> Result<Usage, ProviderError> {
+        let key = self.api_key()?;
+        let res = self
+            .http
+            .get(format!("{}/api/v1/scribe/usage", self.base_url))
+            .header("x-api-key", key.expose())
+            .send()
+            .await
+            .map_err(network_error)?;
+        let status = res.status();
+        let retry = retry_after(res.headers());
+        let body = res.text().await.map_err(network_error)?;
+        if !status.is_success() {
+            return Err(classify(status, &body, retry)
+                .err()
+                .unwrap_or_else(|| unexpected(status)));
+        }
+        Ok(parse_usage(&body))
+    }
+}
+
+/// Finds a balance and currency wherever they are (top level or `data`,
+/// a few likely names). Unknown shapes give `None`s, not an error: the key
+/// worked either way.
+fn parse_usage(body: &str) -> Usage {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Usage {
+            balance: None,
+            currency: None,
+        };
+    };
+    let scopes = [v.get("data").unwrap_or(&serde_json::Value::Null), &v];
+    let find = |names: &[&str]| {
+        scopes
+            .iter()
+            .find_map(|o| names.iter().find_map(|n| o.get(*n)).cloned())
+    };
+    let balance =
+        find(&["balance", "wallet_balance", "credits", "remaining"]).and_then(|b| match b {
+            serde_json::Value::Number(n) => n.as_f64(),
+            serde_json::Value::String(s) => s.trim().parse().ok(),
+            serde_json::Value::Object(o) => o.get("amount").and_then(serde_json::Value::as_f64),
+            _ => None,
+        });
+    let currency = find(&["currency"]).and_then(|c| c.as_str().map(str::to_owned));
+    Usage { balance, currency }
+}
+
 #[async_trait]
 impl AsrProvider for AddisScribe {
     fn id(&self) -> &'static str {
@@ -492,6 +551,22 @@ mod tests {
             segments: Some(vec![]),
         };
         assert!(to_segments(empty, &chunk(0, 1)).is_empty());
+    }
+
+    #[test]
+    fn usage_is_read_leniently() {
+        let u = parse_usage(r#"{"data":{"balance":1240.5,"currency":"ETB","rate":3.5}}"#);
+        assert_eq!(u.balance, Some(1240.5));
+        assert_eq!(u.currency.as_deref(), Some("ETB"));
+        assert_eq!(
+            parse_usage(r#"{"wallet_balance":"12.75"}"#).balance,
+            Some(12.75)
+        );
+        assert_eq!(
+            parse_usage(r#"{"data":{"balance":{"amount":3.0}}}"#).balance,
+            Some(3.0)
+        );
+        assert_eq!(parse_usage("not json").balance, None);
     }
 
     #[test]

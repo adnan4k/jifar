@@ -12,7 +12,10 @@ use tauri::{AppHandle, State};
 use tauri_specta::Event;
 
 use crate::AppState;
-use crate::dto::{DeviceList, RecordingStartArgs, RecordingStarted, RecordingStopped, Settings};
+use crate::dto::{
+    DeviceList, ProviderId, ProviderKeyStatus, ProviderKeyTest, RecordingStartArgs,
+    RecordingStarted, RecordingStopped, Settings,
+};
 use crate::error::{AppError, ErrorCode};
 use crate::events::MeetingStatusChanged;
 
@@ -125,6 +128,49 @@ pub async fn settings_set(
         .map_err(|e| AppError::new(ErrorCode::StorageFailed, format!("saving settings: {e}")))?;
     *state.settings() = new.clone();
     Ok(new.into())
+}
+
+/// Whether an API key is saved for `provider` (never the key itself).
+#[tauri::command]
+#[specta::specta]
+pub async fn provider_key_status(
+    state: State<'_, AppState>,
+    provider: ProviderId,
+) -> Result<ProviderKeyStatus, AppError> {
+    let keys = Arc::clone(&state.keys);
+    blocking(move || Ok(keys.status(provider.into()).into())).await
+}
+
+/// Saves an API key in the OS keyring (FR-PRV-04).
+#[tauri::command]
+#[specta::specta]
+pub async fn provider_key_set(
+    state: State<'_, AppState>,
+    provider: ProviderId,
+    key: String,
+) -> Result<ProviderKeyStatus, AppError> {
+    let keys = Arc::clone(&state.keys);
+    blocking(move || Ok(keys.set(provider.into(), &key)?.into())).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn provider_key_delete(
+    state: State<'_, AppState>,
+    provider: ProviderId,
+) -> Result<ProviderKeyStatus, AppError> {
+    let keys = Arc::clone(&state.keys);
+    blocking(move || Ok(keys.delete(provider.into())?.into())).await
+}
+
+/// Checks the saved key with the provider (free; shows the balance).
+#[tauri::command]
+#[specta::specta]
+pub async fn provider_key_test(
+    state: State<'_, AppState>,
+    provider: ProviderId,
+) -> Result<ProviderKeyTest, AppError> {
+    Ok(state.keys.test(provider.into()).await.into())
 }
 
 pub(crate) fn notify(app: &AppHandle, meeting: &crate::dto::Meeting) {

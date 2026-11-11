@@ -26,6 +26,7 @@ export function Sidebar() {
       <div className="border-t p-3">
         <button
           type="button"
+          onClick={() => useUi.getState().setSettingsOpen(true)}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted transition-colors hover:bg-card-hover hover:text-fg"
         >
           <Settings className="size-4" />

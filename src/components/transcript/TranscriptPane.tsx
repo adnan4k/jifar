@@ -25,7 +25,7 @@ export function TranscriptPane() {
     <main className="flex min-w-0 flex-1 flex-col">
       <header className="flex h-14 shrink-0 items-center justify-between border-b px-6">
         <h1 className="truncate font-medium">{meeting?.title ?? "Meeting transcription"}</h1>
-        <Button variant="outline" size="sm">
+        <Button variant="outline" size="sm" onClick={() => useUi.getState().setSettingsOpen(true)}>
           <Settings />
           Settings
         </Button>

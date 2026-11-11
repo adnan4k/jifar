@@ -14,7 +14,7 @@ pub mod keys;
 pub mod notes;
 mod types;
 
-pub use addis::AddisScribe;
+pub use addis::{AddisScribe, Usage};
 pub use error::{ActionKind, ProviderError};
 pub use keys::{ApiKey, ApiKeyStore, KeyStoreError, KeyringStore, MemoryKeyStore};
 pub use notes::{MeetingNotes, NotesInput, NotesProvider};

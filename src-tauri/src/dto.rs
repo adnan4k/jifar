@@ -140,3 +140,77 @@ impl From<Settings> for CoreSettings {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderId {
+    AddisScribe,
+}
+
+impl From<ProviderId> for jifar_core::provider_keys::Provider {
+    fn from(p: ProviderId) -> Self {
+        match p {
+            ProviderId::AddisScribe => Self::AddisScribe,
+        }
+    }
+}
+
+/// Whether a key is saved. The key itself never crosses IPC.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderKeyStatus {
+    pub saved: bool,
+    /// Last 4 characters, e.g. "3456".
+    pub hint: Option<String>,
+    /// Set when the system keyring can't be used.
+    pub keyring_error: Option<String>,
+}
+
+impl From<jifar_core::provider_keys::KeyStatus> for ProviderKeyStatus {
+    fn from(s: jifar_core::provider_keys::KeyStatus) -> Self {
+        Self {
+            saved: s.saved,
+            hint: s.hint,
+            keyring_error: s.keyring_error,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyTestStatus {
+    Ok,
+    NoKey,
+    InvalidKey,
+    NoCredits,
+    Unreachable,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct ProviderKeyTest {
+    pub status: KeyTestStatus,
+    pub message: Option<String>,
+    pub balance: Option<f64>,
+    pub currency: Option<String>,
+}
+
+impl From<jifar_core::provider_keys::TestOutcome> for ProviderKeyTest {
+    fn from(o: jifar_core::provider_keys::TestOutcome) -> Self {
+        use jifar_core::provider_keys::TestOutcome as T;
+        let (status, message, balance, currency) = match o {
+            T::Ok { balance, currency } => (KeyTestStatus::Ok, None, balance, currency),
+            T::NoKey => (KeyTestStatus::NoKey, None, None, None),
+            T::InvalidKey(m) => (KeyTestStatus::InvalidKey, Some(m), None, None),
+            T::NoCredits(m) => (KeyTestStatus::NoCredits, Some(m), None, None),
+            T::Unreachable(m) => (KeyTestStatus::Unreachable, Some(m), None, None),
+            T::Failed(m) => (KeyTestStatus::Failed, Some(m), None, None),
+        };
+        Self {
+            status,
+            message,
+            balance,
+            currency,
+        }
+    }
+}

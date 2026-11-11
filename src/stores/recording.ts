@@ -58,6 +58,16 @@ function toSummary(m: Meeting): MeetingSummary {
 let settings: Settings_Serialize = { micDevice: null, sinkDevice: null, language: "om" };
 let ticker: ReturnType<typeof setInterval> | undefined;
 
+/** Current settings as last loaded or saved. */
+export const currentSettings = (): Settings_Serialize => settings;
+
+/** Saves a settings change and keeps the recorder's copy in sync. */
+export async function saveSettings(patch: Partial<Settings_Serialize>): Promise<void> {
+  const next = { ...settings, ...patch };
+  settings = await call(commands.settingsSet(next));
+  useRecording.setState({ micDevice: settings.micDevice ?? "" });
+}
+
 export const useRecording = create<RecordingState>((set, get) => {
   // Browser-only stand-in for `audio://levels`.
   const fakeTick = () => {
@@ -103,8 +113,9 @@ export const useRecording = create<RecordingState>((set, get) => {
     setMicDevice: (micDevice) => {
       set({ micDevice });
       if (!isTauri()) return;
-      settings = { ...settings, micDevice: micDevice || null };
-      call(commands.settingsSet(settings)).catch((e) => set({ notice: describeError(e) }));
+      saveSettings({ micDevice: micDevice || null }).catch((e) =>
+        set({ notice: describeError(e) }),
+      );
     },
 
     dismissNotice: () => set({ notice: null }),

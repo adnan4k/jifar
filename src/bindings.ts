@@ -24,6 +24,13 @@ export const commands = {
 	settingsGet: () => typedError<Settings_Serialize, AppError>(__TAURI_INVOKE("settings_get")),
 	/**  Saves settings (e.g. the chosen devices, FR-REC-07) and returns them. */
 	settingsSet: (settings: Settings_Deserialize) => typedError<Settings_Serialize, AppError>(__TAURI_INVOKE("settings_set", { settings })),
+	/**  Whether an API key is saved for `provider` (never the key itself). */
+	providerKeyStatus: (provider: ProviderId) => typedError<ProviderKeyStatus_Serialize, AppError>(__TAURI_INVOKE("provider_key_status", { provider })),
+	/**  Saves an API key in the OS keyring (FR-PRV-04). */
+	providerKeySet: (provider: ProviderId, key: string) => typedError<ProviderKeyStatus_Serialize, AppError>(__TAURI_INVOKE("provider_key_set", { provider, key })),
+	providerKeyDelete: (provider: ProviderId) => typedError<ProviderKeyStatus_Serialize, AppError>(__TAURI_INVOKE("provider_key_delete", { provider })),
+	/**  Checks the saved key with the provider (free; shows the balance). */
+	providerKeyTest: (provider: ProviderId) => typedError<ProviderKeyTest_Serialize, AppError>(__TAURI_INVOKE("provider_key_test", { provider })),
 };
 
 /** Events */
@@ -132,7 +139,13 @@ export type ErrorCode = "internal" | "paths_unavailable" |
 /**  No audio server, no device could be opened, or capture failed. */
 "audio_unavailable" | 
 /**  Reading or writing settings or meeting files failed. */
-"storage_failed";
+"storage_failed" | 
+/**  A command argument was rejected (e.g. an empty API key). */
+"invalid_input" | 
+/**  The OS keyring (Secret Service) can't be used. */
+"keyring_unavailable";
+
+export type KeyTestStatus = "ok" | "no_key" | "invalid_key" | "no_credits" | "unreachable" | "failed";
 
 export type Meeting = {
 	id: string,
@@ -157,6 +170,45 @@ export type MeetingStatusChanged = {
 };
 
 export type MeetingStatusDto = "recording" | "processing" | "ready" | "needs_attention";
+
+export type ProviderId = "addis_scribe";
+
+/**  Whether a key is saved. The key itself never crosses IPC. */
+export type ProviderKeyStatus = ProviderKeyStatus_Serialize | ProviderKeyStatus_Deserialize;
+
+/**  Whether a key is saved. The key itself never crosses IPC. */
+export type ProviderKeyStatus_Deserialize = {
+	saved: boolean,
+	/**  Last 4 characters, e.g. "3456". */
+	hint?: string | null,
+	/**  Set when the system keyring can't be used. */
+	keyringError?: string | null,
+};
+
+/**  Whether a key is saved. The key itself never crosses IPC. */
+export type ProviderKeyStatus_Serialize = {
+	saved: boolean,
+	/**  Last 4 characters, e.g. "3456". */
+	hint: string | null,
+	/**  Set when the system keyring can't be used. */
+	keyringError: string | null,
+};
+
+export type ProviderKeyTest = ProviderKeyTest_Serialize | ProviderKeyTest_Deserialize;
+
+export type ProviderKeyTest_Deserialize = {
+	status: KeyTestStatus,
+	message?: string | null,
+	balance?: number | null,
+	currency?: string | null,
+};
+
+export type ProviderKeyTest_Serialize = {
+	status: KeyTestStatus,
+	message: string | null,
+	balance: number | null,
+	currency: string | null,
+};
 
 export type RecordingStartArgs = RecordingStartArgs_Serialize | RecordingStartArgs_Deserialize;
 

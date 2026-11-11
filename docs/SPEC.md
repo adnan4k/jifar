@@ -192,6 +192,10 @@ Commands (all `async`, returning `Result<T, AppError>`):
 | `search`               | `{query, limit}`                             | `SearchHit[]` |
 | `export_meeting`       | `{meetingId, format, path}`                  | `()` |
 | `settings_get` / `settings_set` | `Settings {micDevice?, sinkDevice?, language}` | `Settings` |
+| `provider_key_status`  | `{provider}` (`"addis_scribe"`)              | `{saved, hint?, keyringError?}`. The key itself never crosses IPC; `hint` is its last 4 characters |
+| `provider_key_set`     | `{provider, key}`                            | `{saved, hint?, keyringError?}` (stored in the OS keyring, FR-PRV-04) |
+| `provider_key_delete`  | `{provider}`                                 | `{saved, hint?, keyringError?}` |
+| `provider_key_test`    | `{provider}`                                 | `{status: ok\|no_key\|invalid_key\|no_credits\|unreachable\|failed, message?, balance?, currency?}` (free, via `GET /scribe/usage`) |
 
 Events (Rust → UI):
 

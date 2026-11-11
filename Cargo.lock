@@ -2302,12 +2302,15 @@ name = "jifar-core"
 version = "0.0.1"
 dependencies = [
  "jifar-audio",
+ "jifar-providers",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]

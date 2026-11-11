@@ -20,6 +20,10 @@ pub enum ErrorCode {
     AudioUnavailable,
     /// Reading or writing settings or meeting files failed.
     StorageFailed,
+    /// A command argument was rejected (e.g. an empty API key).
+    InvalidInput,
+    /// The OS keyring (Secret Service) can't be used.
+    KeyringUnavailable,
 }
 
 #[derive(Debug, thiserror::Error, Serialize, specta::Type)]
@@ -52,6 +56,17 @@ impl From<RecordingError> for AppError {
             RecordingError::WrongMeeting(_) => ErrorCode::MeetingNotFound,
             RecordingError::Audio(_) => ErrorCode::AudioUnavailable,
             RecordingError::Io(_) => ErrorCode::StorageFailed,
+        };
+        Self::new(code, e.to_string())
+    }
+}
+
+impl From<jifar_core::provider_keys::KeyError> for AppError {
+    fn from(e: jifar_core::provider_keys::KeyError) -> Self {
+        use jifar_core::provider_keys::KeyError;
+        let code = match &e {
+            KeyError::Empty => ErrorCode::InvalidInput,
+            KeyError::Keyring(_) => ErrorCode::KeyringUnavailable,
         };
         Self::new(code, e.to_string())
     }

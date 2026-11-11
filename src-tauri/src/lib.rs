@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::Context;
 use jifar_core::paths::AppPaths;
+use jifar_core::provider_keys::ProviderKeys;
 use jifar_core::recording::{RecordingService, SystemAudio};
 use jifar_core::settings::Settings;
 use specta_typescript::Typescript;
@@ -25,6 +26,7 @@ pub use error::{AppError, ErrorCode};
 pub struct AppState {
     pub paths: AppPaths,
     pub recording: Arc<RecordingService>,
+    pub keys: Arc<ProviderKeys>,
     settings: Mutex<Settings>,
 }
 
@@ -50,6 +52,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::recording_stop,
             commands::settings_get,
             commands::settings_set,
+            commands::provider_key_status,
+            commands::provider_key_set,
+            commands::provider_key_delete,
+            commands::provider_key_test,
         ])
         .events(collect_events![
             events::AudioLevels,
@@ -94,6 +100,7 @@ pub fn run() -> anyhow::Result<()> {
         .manage(AppState {
             paths,
             recording,
+            keys: Arc::new(ProviderKeys::default()),
             settings: Mutex::new(settings),
         })
         .invoke_handler(builder.invoke_handler())

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { NotesPanel } from "@/components/notes/NotesPanel";
+import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { TranscriptPane } from "@/components/transcript/TranscriptPane";
 import { useBackendEvents } from "@/lib/queries";
@@ -14,6 +15,7 @@ export function App() {
       <Sidebar />
       <TranscriptPane />
       <NotesPanel />
+      <SettingsDialog />
     </div>
   );
 }

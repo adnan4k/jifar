@@ -25,20 +25,17 @@ impl ApiKey {
     pub fn expose(&self) -> &str {
         &self.0
     }
+
+    /// Last 4 characters, safe to show ("…3456").
+    pub fn hint(&self) -> String {
+        let chars: Vec<char> = self.0.chars().collect();
+        chars[chars.len().saturating_sub(4)..].iter().collect()
+    }
 }
 
 impl fmt::Debug for ApiKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let tail: String = self
-            .0
-            .chars()
-            .rev()
-            .take(4)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        write!(f, "ApiKey(…{tail})")
+        write!(f, "ApiKey(…{})", self.hint())
     }
 }
 
