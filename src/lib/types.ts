@@ -41,9 +41,15 @@ export interface MeetingDetail extends MeetingSummary {
   notes: MeetingNotes | null;
   /** ASR chunk progress while processing. */
   progress: { done: number; total: number };
+  /**
+   * Set for meetings recorded by the real Rust core. Until the store and
+   * queue exist (M3) they have audio on disk but no transcript yet.
+   */
+  recorded?: { dir: string; problems: string[] };
 }
 
 export interface AudioDevice {
   id: string;
   label: string;
+  isDefault?: boolean;
 }

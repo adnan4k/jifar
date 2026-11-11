@@ -2,26 +2,60 @@
 //! `jifar-*` crates.
 
 mod commands;
+mod dto;
 mod error;
+mod events;
+mod live;
+mod tray;
 
 use std::path::Path;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::Context;
 use jifar_core::paths::AppPaths;
+use jifar_core::recording::{RecordingService, SystemAudio};
+use jifar_core::settings::Settings;
 use specta_typescript::Typescript;
-use tauri_specta::{Builder, collect_commands};
+use tauri::{Manager, RunEvent};
+use tauri_specta::{Builder, collect_commands, collect_events};
 
 pub use error::{AppError, ErrorCode};
 
 pub struct AppState {
     pub paths: AppPaths,
+    pub recording: Arc<RecordingService>,
+    settings: Mutex<Settings>,
+}
+
+impl AppState {
+    pub(crate) fn settings(&self) -> MutexGuard<'_, Settings> {
+        self.settings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 /// Generated TS bindings, checked into the repo and verified in CI.
 pub const BINDINGS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/bindings.ts");
 
 fn specta_builder() -> Builder<tauri::Wry> {
-    Builder::<tauri::Wry>::new().commands(collect_commands![commands::ping])
+    Builder::<tauri::Wry>::new()
+        .commands(collect_commands![
+            commands::ping,
+            commands::devices_list,
+            commands::recording_start,
+            commands::recording_pause,
+            commands::recording_resume,
+            commands::recording_stop,
+            commands::settings_get,
+            commands::settings_set,
+        ])
+        .events(collect_events![
+            events::AudioLevels,
+            events::AudioSilent,
+            events::MeetingStatusChanged,
+            events::AppErrorEvent,
+        ])
 }
 
 pub fn export_bindings(path: &Path) -> anyhow::Result<()> {
@@ -49,16 +83,45 @@ pub fn run() -> anyhow::Result<()> {
     #[cfg(debug_assertions)]
     export_bindings(Path::new(BINDINGS_PATH))?;
 
+    let settings = Settings::load(&paths.settings_path());
+    let recording = Arc::new(RecordingService::new(
+        paths.clone(),
+        Box::new(SystemAudio::default()),
+    ));
     let builder = specta_builder();
-    tauri::Builder::default()
-        .manage(AppState { paths })
+    let app = tauri::Builder::default()
+        .manage(AppState {
+            paths,
+            recording,
+            settings: Mutex::new(settings),
+        })
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);
+            // Without a tray there would be no indicator outside the window;
+            // recording still works, but say so loudly.
+            let tray = match tray::Tray::build(app.handle()) {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    tracing::error!(error = %e, "system tray unavailable");
+                    None
+                }
+            };
+            live::spawn(app.handle().clone(), tray);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .context("running Tauri application")
+        .build(tauri::generate_context!())
+        .context("building Tauri application")?;
+
+    app.run(|handle, event| {
+        if let RunEvent::Exit = event
+            && let Some(stopped) = handle.state::<AppState>().recording.stop_any()
+        {
+            // Closing the app never loses a recording: files are finalized.
+            tracing::info!(meeting = %stopped.meeting.id, "recording finalized on exit");
+        }
+    });
+    Ok(())
 }
 
 #[cfg(test)]

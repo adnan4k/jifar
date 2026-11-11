@@ -2,6 +2,7 @@
 //! The UI branches on `code`, never on `message`, so codes are stable API.
 
 use jifar_core::paths::PathsError;
+use jifar_core::recording::RecordingError;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
@@ -9,6 +10,16 @@ use serde::Serialize;
 pub enum ErrorCode {
     Internal,
     PathsUnavailable,
+    /// `recording_start` while a recording is in progress.
+    AlreadyRecording,
+    /// Pause/resume/stop with nothing recording.
+    NotRecording,
+    /// The meeting ID is not the one being recorded.
+    MeetingNotFound,
+    /// No audio server, no device could be opened, or capture failed.
+    AudioUnavailable,
+    /// Reading or writing settings or meeting files failed.
+    StorageFailed,
 }
 
 #[derive(Debug, thiserror::Error, Serialize, specta::Type)]
@@ -30,5 +41,18 @@ impl AppError {
 impl From<PathsError> for AppError {
     fn from(e: PathsError) -> Self {
         Self::new(ErrorCode::PathsUnavailable, e.to_string())
+    }
+}
+
+impl From<RecordingError> for AppError {
+    fn from(e: RecordingError) -> Self {
+        let code = match &e {
+            RecordingError::AlreadyRecording => ErrorCode::AlreadyRecording,
+            RecordingError::NotRecording => ErrorCode::NotRecording,
+            RecordingError::WrongMeeting(_) => ErrorCode::MeetingNotFound,
+            RecordingError::Audio(_) => ErrorCode::AudioUnavailable,
+            RecordingError::Io(_) => ErrorCode::StorageFailed,
+        };
+        Self::new(code, e.to_string())
     }
 }

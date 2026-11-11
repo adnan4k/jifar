@@ -1,18 +1,19 @@
-import { Mic, Pause, Play, Square } from "lucide-react";
+import { AlertTriangle, Mic, Pause, Play, Square, X } from "lucide-react";
+import { isTauri } from "@/lib/platform";
 import { useDevices } from "@/lib/queries";
 import { cn, formatClock } from "@/lib/utils";
 import { useRecording } from "@/stores/recording";
 
 export function RecordControls() {
-  const { phase, start, pause, resume, stop } = useRecording();
+  const { phase, busy, start, pause, resume, stop } = useRecording();
   const active = phase !== "idle";
 
   return (
     <div className="flex items-center justify-center gap-5">
       <button
         type="button"
-        onClick={phase === "paused" ? resume : pause}
-        disabled={!active}
+        onClick={() => void (phase === "paused" ? resume() : pause())}
+        disabled={!active || busy}
         title={phase === "paused" ? "Resume" : "Pause"}
         className="grid size-12 place-items-center rounded-full bg-card text-muted transition-colors hover:text-fg disabled:opacity-40"
       >
@@ -22,7 +23,7 @@ export function RecordControls() {
       <button
         type="button"
         onClick={() => void start()}
-        disabled={active}
+        disabled={active || busy}
         title={active ? "Recording" : "Start recording"}
         className={cn(
           "grid size-[72px] place-items-center rounded-full bg-accent text-white transition-all",
@@ -36,7 +37,7 @@ export function RecordControls() {
       <button
         type="button"
         onClick={() => void stop()}
-        disabled={!active}
+        disabled={!active || busy}
         title="Stop and transcribe"
         className="grid size-12 place-items-center rounded-full border bg-panel transition-colors hover:bg-card-hover disabled:opacity-40"
       >
@@ -57,12 +58,37 @@ export function DevicePicker() {
       aria-label="Microphone"
       className="mx-auto block h-8 max-w-[200px] truncate rounded-md border bg-panel px-2 text-xs text-fg outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-60"
     >
+      {isTauri() && <option value="">System default microphone</option>}
       {data?.inputs.map((d) => (
         <option key={d.id} value={d.id}>
           {d.label}
+          {d.isDefault ? " (default)" : ""}
         </option>
       ))}
     </select>
+  );
+}
+
+/** Device fallbacks, silence warnings and track faults (FR-REC-07, 08). */
+export function RecordingNotice() {
+  const { notice, dismissNotice } = useRecording();
+  if (!notice) return null;
+  return (
+    <div
+      role="status"
+      className="flex items-start gap-2 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs"
+    >
+      <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warn" />
+      <span className="flex-1 leading-relaxed">{notice}</span>
+      <button
+        type="button"
+        onClick={dismissNotice}
+        aria-label="Dismiss"
+        className="text-muted hover:text-fg"
+      >
+        <X className="size-3.5" />
+      </button>
+    </div>
   );
 }
 

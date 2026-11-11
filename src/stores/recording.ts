@@ -1,9 +1,14 @@
 import { create } from "zustand";
+import { commands, events, type Meeting, type Settings_Serialize } from "@/bindings";
 import { backend } from "@/lib/mock-backend";
+import { call, describeError } from "@/lib/native";
+import { isTauri } from "@/lib/platform";
+import type { MeetingSummary } from "@/lib/types";
 import { useUi } from "./ui";
 
-// Recording session state. The ticker fakes `audio://levels` (~10 Hz) until the
-// Rust audio core exists. No transcription happens here (spec D1).
+// Recording session state. In the app it drives the real Rust core and
+// listens to `audio://levels` (~10 Hz). In the browser (`pnpm dev`) it fakes
+// both. No transcription happens while recording (spec D1).
 
 export type RecordingPhase = "idle" | "recording" | "paused";
 
@@ -16,20 +21,46 @@ interface RecordingState {
   elapsedMs: number;
   levels: { mic: number; system: number }; // 0..1
   history: number[]; // waveform bars, 0..1
+  /** Input device ID; "" = system default (app) or a mock ID (browser). */
   micDevice: string;
+  /** Message for the user (device fallback, silence, track fault). */
+  notice: string | null;
+  /** True while a start/stop call is in flight. */
+  busy: boolean;
   setMicDevice: (id: string) => void;
+  dismissNotice: () => void;
   start: () => Promise<void>;
-  pause: () => void;
-  resume: () => void;
+  pause: () => Promise<void>;
+  resume: () => Promise<void>;
   stop: () => Promise<void>;
 }
 
-let ticker: ReturnType<typeof setInterval> | undefined;
-
 const flat = () => Array.from({ length: HISTORY_BARS }, () => 0);
 
+/** Maps dBFS to a 0..1 meter (−60 dBFS and below read as empty). */
+export const meterFromDbfs = (db: number | null | undefined): number =>
+  db == null ? 0 : Math.min(1, Math.max(0, (db + 60) / 60));
+
+const defaultTitle = () =>
+  `Meeting ${new Date().toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`;
+
+function toSummary(m: Meeting): MeetingSummary {
+  return {
+    id: m.id,
+    title: m.title,
+    language: m.language,
+    status: m.status,
+    startedAt: m.startedAt ?? Date.now(),
+    durationMs: m.durationMs ?? 0,
+  };
+}
+
+let settings: Settings_Serialize = { micDevice: null, sinkDevice: null, language: "om" };
+let ticker: ReturnType<typeof setInterval> | undefined;
+
 export const useRecording = create<RecordingState>((set, get) => {
-  const tick = () => {
+  // Browser-only stand-in for `audio://levels`.
+  const fakeTick = () => {
     const { phase, levels, history, elapsedMs } = get();
     if (phase !== "recording") {
       set({ levels: { mic: 0, system: 0 }, history: [...history.slice(1), 0] });
@@ -50,45 +81,216 @@ export const useRecording = create<RecordingState>((set, get) => {
     });
   };
 
+  const reset = () =>
+    set({
+      phase: "idle",
+      meetingId: null,
+      elapsedMs: 0,
+      levels: { mic: 0, system: 0 },
+      history: flat(),
+    });
+
   return {
     phase: "idle",
     meetingId: null,
     elapsedMs: 0,
     levels: { mic: 0, system: 0 },
     history: flat(),
-    micDevice: "default",
-    setMicDevice: (micDevice) => set({ micDevice }),
+    micDevice: isTauri() ? "" : "default",
+    notice: null,
+    busy: false,
+
+    setMicDevice: (micDevice) => {
+      set({ micDevice });
+      if (!isTauri()) return;
+      settings = { ...settings, micDevice: micDevice || null };
+      call(commands.settingsSet(settings)).catch((e) => set({ notice: describeError(e) }));
+    },
+
+    dismissNotice: () => set({ notice: null }),
 
     start: async () => {
-      if (get().phase !== "idle") return;
-      const meeting = await backend.recordingStart({ language: "om" });
-      useUi.getState().selectMeeting(meeting.id);
-      set({ phase: "recording", meetingId: meeting.id, elapsedMs: 0, history: flat() });
-      clearInterval(ticker);
-      ticker = setInterval(tick, TICK_MS);
+      if (get().phase !== "idle" || get().busy) return;
+      if (!isTauri()) {
+        const meeting = await backend.recordingStart({ language: "om" });
+        useUi.getState().selectMeeting(meeting.id);
+        set({ phase: "recording", meetingId: meeting.id, elapsedMs: 0, history: flat() });
+        clearInterval(ticker);
+        ticker = setInterval(fakeTick, TICK_MS);
+        return;
+      }
+      set({ busy: true, notice: null });
+      try {
+        const res = await call(
+          commands.recordingStart({
+            title: defaultTitle(),
+            language: settings.language,
+            micDevice: get().micDevice || null,
+            sinkDevice: settings.sinkDevice,
+          }),
+        );
+        backend.upsertRecorded(toSummary(res.meeting), { dir: res.meeting.dir, problems: [] });
+        useUi.getState().selectMeeting(res.meeting.id);
+        set({
+          phase: "recording",
+          meetingId: res.meeting.id,
+          elapsedMs: 0,
+          history: flat(),
+          notice: res.notices.length ? res.notices.join(" ") : null,
+        });
+      } catch (e) {
+        set({ notice: describeError(e) });
+      } finally {
+        set({ busy: false });
+      }
     },
 
-    pause: () => {
-      if (get().phase === "recording") set({ phase: "paused" });
+    pause: async () => {
+      const { phase, meetingId } = get();
+      if (phase !== "recording" || !meetingId) return;
+      if (isTauri()) {
+        try {
+          await call(commands.recordingPause(meetingId));
+        } catch (e) {
+          set({ notice: describeError(e) });
+          return;
+        }
+      }
+      set({ phase: "paused" });
     },
 
-    resume: () => {
-      if (get().phase === "paused") set({ phase: "recording" });
+    resume: async () => {
+      const { phase, meetingId } = get();
+      if (phase !== "paused" || !meetingId) return;
+      if (isTauri()) {
+        try {
+          await call(commands.recordingResume(meetingId));
+        } catch (e) {
+          set({ notice: describeError(e) });
+          return;
+        }
+      }
+      set({ phase: "recording" });
     },
 
     stop: async () => {
-      const { meetingId, elapsedMs } = get();
-      if (!meetingId) return;
-      clearInterval(ticker);
-      ticker = undefined;
-      set({
-        phase: "idle",
-        meetingId: null,
-        elapsedMs: 0,
-        levels: { mic: 0, system: 0 },
-        history: flat(),
-      });
-      await backend.recordingStop(meetingId, elapsedMs);
+      const { meetingId, elapsedMs, busy } = get();
+      if (!meetingId || busy) return;
+      if (!isTauri()) {
+        clearInterval(ticker);
+        ticker = undefined;
+        reset();
+        await backend.recordingStop(meetingId, elapsedMs);
+        return;
+      }
+      set({ busy: true });
+      try {
+        const res = await call(commands.recordingStop(meetingId));
+        backend.upsertRecorded(toSummary(res.meeting), {
+          dir: res.meeting.dir,
+          problems: res.problems,
+        });
+        reset();
+        if (res.problems.length) set({ notice: res.problems.join(" ") });
+      } catch (e) {
+        set({ notice: describeError(e) });
+      } finally {
+        set({ busy: false });
+      }
     },
   };
 });
+
+/**
+ * Connects the store to the core: loads settings and listens to live events,
+ * including recordings started or stopped from the tray. Returns a cleanup.
+ */
+export function connectRecording(): () => void {
+  if (!isTauri()) return () => {};
+  const unlisten: Promise<() => void>[] = [];
+  const store = useRecording;
+
+  call(commands.settingsGet())
+    .then((s) => {
+      settings = s;
+      store.setState({ micDevice: s.micDevice ?? "" });
+    })
+    .catch((e) => store.setState({ notice: describeError(e) }));
+
+  unlisten.push(
+    events.audioLevels.listen(({ payload }) => {
+      const st = store.getState();
+      if (st.meetingId && payload.meetingId !== st.meetingId) return;
+      const mic = meterFromDbfs(payload.mic);
+      const system = meterFromDbfs(payload.system);
+      store.setState({
+        meetingId: payload.meetingId,
+        phase: payload.paused ? "paused" : "recording",
+        elapsedMs: payload.elapsedMs ?? 0,
+        levels: { mic, system },
+        history: [...st.history.slice(1), payload.paused ? 0 : Math.max(mic, system)],
+      });
+    }),
+  );
+
+  unlisten.push(
+    events.meetingStatus.listen(({ payload }) => {
+      const st = store.getState();
+      if (payload.status === "recording" && st.meetingId !== payload.meetingId) {
+        // Started from the tray: show it like one started here.
+        backend.upsertRecorded(
+          {
+            id: payload.meetingId,
+            title: "",
+            language: settings.language,
+            status: "recording",
+            startedAt: Date.now(),
+            durationMs: 0,
+          },
+          { dir: "", problems: [] },
+        );
+        useUi.getState().selectMeeting(payload.meetingId);
+        store.setState({ phase: "recording", meetingId: payload.meetingId, history: flat() });
+      } else if (payload.status !== "recording" && st.meetingId === payload.meetingId && !st.busy) {
+        // Stopped from the tray.
+        const m = { id: payload.meetingId, status: payload.status };
+        backend
+          .meetingGet(m.id)
+          .then((d) =>
+            backend.upsertRecorded(
+              { ...d, status: m.status, durationMs: st.elapsedMs },
+              d.recorded ?? { dir: "", problems: [] },
+            ),
+          )
+          .catch(() => {});
+        store.setState({
+          phase: "idle",
+          meetingId: null,
+          elapsedMs: 0,
+          levels: { mic: 0, system: 0 },
+          history: flat(),
+        });
+      }
+    }),
+  );
+
+  unlisten.push(
+    events.audioSilent.listen(({ payload }) => {
+      const who = payload.track === "mic" ? "your microphone" : "the other participants";
+      store.setState({
+        notice:
+          payload.sinceMs != null
+            ? `No sound from ${who} for over 30 seconds. Check the device or mute.`
+            : null,
+      });
+    }),
+  );
+
+  unlisten.push(
+    events.appError.listen(({ payload }) => store.setState({ notice: payload.message })),
+  );
+
+  return () => {
+    for (const u of unlisten) void u.then((f) => f());
+  };
+}

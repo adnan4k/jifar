@@ -4,7 +4,7 @@ import { useAppInfo } from "@/lib/native";
 import { useMeetings } from "@/lib/queries";
 import { cn, formatDate, formatDuration } from "@/lib/utils";
 import { useUi } from "@/stores/ui";
-import { DevicePicker, RecordControls, Waveform } from "./RecordControls";
+import { DevicePicker, RecordControls, RecordingNotice, Waveform } from "./RecordControls";
 
 export function Sidebar() {
   return (
@@ -18,6 +18,7 @@ export function Sidebar() {
         <RecordControls />
         <DevicePicker />
         <Waveform />
+        <RecordingNotice />
       </div>
 
       <MeetingList />
@@ -85,7 +86,11 @@ function MeetingList() {
 
 function CoreStatus() {
   const { data, isError } = useAppInfo();
-  const label = data ? `v${data.version}` : isError ? "core error" : "preview (mock data)";
+  const label = data
+    ? `v${data.version} · recording live, history is demo data`
+    : isError
+      ? "core error"
+      : "preview (mock data)";
   return (
     <p className="px-3 pt-1 text-[11px] text-muted/70" title={data?.dataDir}>
       {label}

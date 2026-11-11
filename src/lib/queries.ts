@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
+import { commands } from "@/bindings";
 import { backend } from "./mock-backend";
+import { call } from "./native";
+import { isTauri } from "./platform";
+import type { AudioDevice } from "./types";
 
 export const queryKeys = {
   meetings: (q: string) => ["meetings", q] as const,
@@ -30,8 +34,13 @@ export function useMeeting(id: string | null) {
   });
 }
 
+/** Real devices from the core in the app, mock devices in the browser. */
 export function useDevices() {
-  return useQuery({ queryKey: queryKeys.devices, queryFn: () => backend.devicesList() });
+  return useQuery({
+    queryKey: queryKeys.devices,
+    queryFn: async (): Promise<{ inputs: AudioDevice[]; outputs: AudioDevice[] }> =>
+      isTauri() ? call(commands.devicesList()) : backend.devicesList(),
+  });
 }
 
 export function useGenerateNotes() {

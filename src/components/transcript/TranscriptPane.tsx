@@ -1,4 +1,13 @@
-import { AlertTriangle, Loader2, Mic, Pause, Play, RotateCw, Settings } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  Mic,
+  Pause,
+  Play,
+  RotateCw,
+  Settings,
+} from "lucide-react";
 import { type Ref, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useMeeting, useRetryQueue } from "@/lib/queries";
@@ -45,6 +54,7 @@ function EmptyState() {
 
 function MeetingBody({ meeting }: { meeting: MeetingDetail }) {
   if (meeting.status === "recording") return <RecordingPlaceholder />;
+  if (meeting.recorded) return <RecordedPanel meeting={meeting} />;
 
   return (
     <>
@@ -72,6 +82,42 @@ function RecordingPlaceholder() {
           <LevelMeter label="Me" value={levels.mic} />
           <LevelMeter label="Others" value={levels.system} />
         </div>
+      </div>
+    </div>
+  );
+}
+
+// A real recording from the core. Transcription isn't wired yet (M2/M3), so
+// show what was saved instead of a fake transcript.
+function RecordedPanel({ meeting }: { meeting: MeetingDetail }) {
+  const problems = meeting.recorded?.problems ?? [];
+  return (
+    <div className="grid flex-1 place-items-center p-8 text-center">
+      <div className="max-w-md space-y-4">
+        <div className="mx-auto grid size-14 place-items-center rounded-full bg-accent-soft">
+          {problems.length ? (
+            <AlertTriangle className="size-6 text-warn" />
+          ) : (
+            <CheckCircle2 className="size-6 text-accent" />
+          )}
+        </div>
+        <h2 className="text-lg font-medium">Recording saved</h2>
+        <p className="text-sm text-muted">
+          {formatTimestamp(meeting.durationMs)} of audio, recorded on this computer. Transcription
+          is not connected yet; it arrives with the transcription milestone.
+        </p>
+        {meeting.recorded?.dir && (
+          <p className="break-all rounded-lg bg-card px-3 py-2 font-mono text-xs text-muted">
+            {meeting.recorded.dir}
+          </p>
+        )}
+        {problems.length > 0 && (
+          <ul className="space-y-1 text-left text-sm text-warn">
+            {problems.map((p) => (
+              <li key={p}>• {p}</li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   );
