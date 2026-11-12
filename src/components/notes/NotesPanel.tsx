@@ -1,6 +1,8 @@
-import { CornerDownRight, Loader2, RefreshCw, Sparkles } from "lucide-react";
-import type { ReactNode } from "react";
+import { CornerDownRight, Loader2, RefreshCw, Settings, Sparkles } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { CoreError, describeError } from "@/lib/native";
+import { isTauri } from "@/lib/platform";
 import { useGenerateNotes, useMeeting } from "@/lib/queries";
 import type { MeetingDetail, MeetingNotes } from "@/lib/types";
 import { useUi } from "@/stores/ui";
@@ -22,63 +24,118 @@ export function NotesPanel() {
   );
 }
 
+const OUTPUT_LANGUAGES = [
+  { code: "om", label: "Afaan Oromo" },
+  { code: "en", label: "English" },
+] as const;
+
 function NotesBody({ meeting }: { meeting: MeetingDetail | undefined }) {
   const generate = useGenerateNotes();
+  const [language, setLanguage] = useState<string | null>(null);
 
   if (!meeting)
     return <Hint>Select a meeting to see its summary, decisions and action items.</Hint>;
   if (meeting.status === "recording")
     return <Hint>Notes are generated from the transcript after the meeting.</Hint>;
-  if (meeting.recorded && meeting.segments.length === 0)
-    return (
-      <Hint>
-        Notes are made from the transcript. Transcription isn't connected yet, so this recording has
-        none.
-      </Hint>
-    );
-  if (meeting.status === "processing")
+  if (meeting.segments.length === 0)
     return (
       <div className="space-y-3">
-        <Hint>Waiting for the transcript to finish…</Hint>
-        {[80, 95, 70].map((w) => (
-          <div key={w} className="h-3 animate-pulse rounded bg-card" style={{ width: `${w}%` }} />
-        ))}
+        <Hint>
+          {meeting.status === "processing"
+            ? "Waiting for the transcript…"
+            : "Notes are made from the transcript once there is one."}
+        </Hint>
+        {meeting.status === "processing" &&
+          [80, 95, 70].map((w) => (
+            <div key={w} className="h-3 animate-pulse rounded bg-card" style={{ width: `${w}%` }} />
+          ))}
       </div>
     );
 
-  const busy = generate.isPending && generate.variables === meeting.id;
+  const busy = generate.isPending && generate.variables?.id === meeting.id;
+  // Default: the language the notes were last written in, else the meeting's.
+  const output = language ?? meeting.notes?.language ?? meeting.language;
+  const run = () => generate.mutate({ id: meeting.id, outputLanguage: output });
+  const error = generate.isError && generate.variables?.id === meeting.id ? generate.error : null;
+
+  const controls = (
+    <div className="space-y-2">
+      {isTauri() && (
+        <label className="flex items-center justify-between gap-2 text-xs text-muted">
+          Write notes in
+          <select
+            value={output}
+            onChange={(e) => setLanguage(e.target.value)}
+            disabled={busy}
+            className="h-8 rounded-md border bg-bg px-2 text-xs text-fg outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+          >
+            {OUTPUT_LANGUAGES.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <Button
+        className="w-full"
+        variant={meeting.notes ? "outline" : "default"}
+        size={meeting.notes ? "sm" : "default"}
+        disabled={busy}
+        onClick={run}
+      >
+        {busy ? <Loader2 className="animate-spin" /> : meeting.notes ? <RefreshCw /> : <Sparkles />}
+        {busy ? "Generating…" : meeting.notes ? "Regenerate" : "Generate notes"}
+      </Button>
+      {error && <NotesError error={error} />}
+    </div>
+  );
 
   if (!meeting.notes)
     return (
       <div className="space-y-4">
         <Hint>
           Create a summary with key points, decisions and action items from this transcript. The
-          transcript text is sent to the notes provider.
+          transcript text is sent to Addis AI.
         </Hint>
-        <Button
-          className="w-full"
-          disabled={busy || meeting.segments.length === 0}
-          onClick={() => generate.mutate(meeting.id)}
-        >
-          {busy ? <Loader2 className="animate-spin" /> : <Sparkles />}
-          {busy ? "Generating…" : "Generate notes"}
-        </Button>
+        {controls}
       </div>
     );
 
   return (
     <div className="space-y-6">
       <Notes notes={meeting.notes} meeting={meeting} />
-      <Button
-        variant="outline"
-        size="sm"
-        className="w-full"
-        disabled={busy}
-        onClick={() => generate.mutate(meeting.id)}
-      >
-        {busy ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-        Regenerate
-      </Button>
+      {controls}
+    </div>
+  );
+}
+
+function NotesError({ error }: { error: Error }) {
+  const code = error instanceof CoreError ? error.code : null;
+  const openSettings = () => useUi.getState().setSettingsOpen(true);
+  const text = (() => {
+    switch (code) {
+      case "provider_auth":
+        return "Add a working Addis AI API key in Settings to generate notes.";
+      case "provider_credits":
+        return "Your Addis AI balance is too low. Top up, then try again.";
+      case "provider_unavailable":
+        return "Couldn't reach Addis AI (offline or busy). Try again in a moment.";
+      case "provider_failed":
+        return `The notes model couldn't produce notes: ${error.message}`;
+      default:
+        return describeError(error);
+    }
+  })();
+  return (
+    <div className="space-y-2 rounded-lg bg-warn/10 px-3 py-2 text-xs text-warn">
+      <p>{text}</p>
+      {(code === "provider_auth" || code === "provider_credits") && (
+        <Button size="sm" variant="outline" onClick={openSettings}>
+          <Settings />
+          Open Settings
+        </Button>
+      )}
     </div>
   );
 }

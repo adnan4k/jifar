@@ -42,10 +42,15 @@ export const commands = {
 	 */
 	meetingsList: (query: string | null, limit: number | null) => typedError<Meeting[], AppError>(__TAURI_INVOKE("meetings_list", { query, limit })),
 	/**  One meeting with its transcript and waveform (FR-HIS-03). */
-	meetingGet: (meetingId: string) => typedError<MeetingDetailDto, AppError>(__TAURI_INVOKE("meeting_get", { meetingId })),
+	meetingGet: (meetingId: string) => typedError<MeetingDetailDto_Serialize, AppError>(__TAURI_INVOKE("meeting_get", { meetingId })),
 	meetingRename: (meetingId: string, title: string) => typedError<null, AppError>(__TAURI_INVOKE("meeting_rename", { meetingId, title })),
 	/**  Deletes a meeting and its audio (FR-HIS-04). The UI confirms first. */
 	meetingDelete: (meetingId: string) => typedError<null, AppError>(__TAURI_INVOKE("meeting_delete", { meetingId })),
+	/**
+	 *  Generates notes from the saved transcript (FR-AI-01..03) and saves them
+	 *  as a new version. `outputLanguage` defaults to the meeting language.
+	 */
+	notesGenerate: (meetingId: string, outputLanguage: string | null) => typedError<NotesDto_Serialize, AppError>(__TAURI_INVOKE("notes_generate", { meetingId, outputLanguage })),
 };
 
 /** Events */
@@ -59,6 +64,22 @@ export const events = {
 };
 
 /* Types */
+export type ActionItemDto = ActionItemDto_Serialize | ActionItemDto_Deserialize;
+
+export type ActionItemDto_Deserialize = {
+	text: string,
+	owner?: string | null,
+	due?: string | null,
+	segmentIds: string[],
+};
+
+export type ActionItemDto_Serialize = {
+	text: string,
+	owner: string | null,
+	due: string | null,
+	segmentIds: string[],
+};
+
 export type AppError = {
 	code: ErrorCode,
 	message: string,
@@ -147,6 +168,12 @@ export type BlockedReason =
 /**  Balance too low. */
 "credits";
 
+export type DecisionDto = {
+	text: string,
+	/**  Transcript segments it came from (FR-AI-05). */
+	segmentIds: string[],
+};
+
 export type DeviceList = {
 	inputs: AudioDeviceDto[],
 	outputs: AudioDeviceDto[],
@@ -166,7 +193,15 @@ export type ErrorCode = "internal" | "paths_unavailable" |
 /**  A command argument was rejected (e.g. an empty API key). */
 "invalid_input" | 
 /**  The OS keyring (Secret Service) can't be used. */
-"keyring_unavailable";
+"keyring_unavailable" | 
+/**  No provider API key, or it was rejected: fix it in Settings. */
+"provider_auth" | 
+/**  The provider balance is too low. */
+"provider_credits" | 
+/**  Offline or the provider is busy; try again later. */
+"provider_unavailable" | 
+/**  The provider couldn't do this request (e.g. invalid output twice). */
+"provider_failed";
 
 export type KeyTestStatus = "ok" | "no_key" | "invalid_key" | "no_credits" | "unreachable" | "failed";
 
@@ -184,13 +219,30 @@ export type Meeting = {
 };
 
 /**  A saved meeting with its transcript (FR-HIS-03). */
-export type MeetingDetailDto = {
+export type MeetingDetailDto = MeetingDetailDto_Serialize | MeetingDetailDto_Deserialize;
+
+/**  A saved meeting with its transcript (FR-HIS-03). */
+export type MeetingDetailDto_Deserialize = {
 	meeting: Meeting,
 	segments: SegmentDto[],
 	/**  Waveform overview for the player (0..=1). */
 	peaks: (number | null)[],
 	/**  `mixed.opus` exists and can be played. */
 	hasAudio: boolean,
+	/**  Latest notes version, if generated. */
+	notes?: NotesDto_Deserialize | null,
+};
+
+/**  A saved meeting with its transcript (FR-HIS-03). */
+export type MeetingDetailDto_Serialize = {
+	meeting: Meeting,
+	segments: SegmentDto[],
+	/**  Waveform overview for the player (0..=1). */
+	peaks: (number | null)[],
+	/**  `mixed.opus` exists and can be played. */
+	hasAudio: boolean,
+	/**  Latest notes version, if generated. */
+	notes: NotesDto_Serialize | null,
 };
 
 /**
@@ -203,6 +255,33 @@ export type MeetingStatusChanged = {
 };
 
 export type MeetingStatusDto = "recording" | "processing" | "ready" | "needs_attention";
+
+/**  Meeting notes (FR-AI-01..05), one saved version. */
+export type NotesDto = NotesDto_Serialize | NotesDto_Deserialize;
+
+/**  Meeting notes (FR-AI-01..05), one saved version. */
+export type NotesDto_Deserialize = {
+	version: number,
+	/**  Language the notes are written in. */
+	language: string,
+	provider?: string | null,
+	summary: string,
+	keyPoints: string[],
+	decisions: DecisionDto[],
+	actionItems: ActionItemDto_Deserialize[],
+};
+
+/**  Meeting notes (FR-AI-01..05), one saved version. */
+export type NotesDto_Serialize = {
+	version: number,
+	/**  Language the notes are written in. */
+	language: string,
+	provider: string | null,
+	summary: string,
+	keyPoints: string[],
+	decisions: DecisionDto[],
+	actionItems: ActionItemDto_Serialize[],
+};
 
 export type ProviderId = 
 /**  Addis AI (transcription and notes share one key). */

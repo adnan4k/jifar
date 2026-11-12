@@ -188,7 +188,7 @@ Commands (all `async`, returning `Result<T, AppError>`):
 | `meeting_get`          | `{meetingId}`                                | `{meeting, segments[], peaks[], hasAudio}` |
 | `meeting_rename` / `meeting_delete` | `{meetingId, title}` / `{meetingId}` | `()`. Delete removes the database rows and `meetings/<id>/` (UI confirms with a second click; refused while that meeting records) |
 | `segment_update`       | `{segmentId, text}`                          | `Segment` |
-| `notes_generate`       | `{meetingId, outputLanguage}`                | `Notes` |
+| `notes_generate`       | `{meetingId, outputLanguage?}`               | `Notes {version, language, provider, summary, keyPoints[], decisions[], actionItems[]}`, saved as a new `ai` version. Errors `provider_auth` / `provider_credits` / `provider_unavailable` / `provider_failed` |
 | `search`               | `{query, limit}`                             | `SearchHit[]` |
 | `export_meeting`       | `{meetingId, format, path}`                  | `()` |
 | `queue_retry`          | `{meetingId}`                                | `()`. Re-runs unfinished chunks; finished ones aren't sent again (idempotent request IDs) |

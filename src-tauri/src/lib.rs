@@ -29,6 +29,7 @@ pub struct AppState {
     pub paths: AppPaths,
     pub recording: Arc<RecordingService>,
     pub library: Library,
+    pub notes: jifar_core::notes::NotesService,
     pub keys: Arc<ProviderKeys>,
     settings: Mutex<Settings>,
 }
@@ -64,6 +65,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meeting_get,
             commands::meeting_rename,
             commands::meeting_delete,
+            commands::notes_generate,
         ])
         .events(collect_events![
             events::AudioLevels,
@@ -120,6 +122,13 @@ pub fn run() -> anyhow::Result<()> {
             paths,
             recording,
             library: library.clone(),
+            notes: jifar_core::notes::NotesService::new(
+                Arc::new(
+                    jifar_providers::AddisNotes::new(Box::new(jifar_providers::KeyringStore))
+                        .context("setting up the notes provider")?,
+                ),
+                library.clone(),
+            ),
             keys: Arc::new(ProviderKeys::default()),
             settings: Mutex::new(settings),
         })

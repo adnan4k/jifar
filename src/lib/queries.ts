@@ -46,7 +46,22 @@ function toDetail(d: MeetingDetailDto): MeetingDetail {
       text: s.text,
       edited: false,
     })),
-    notes: null,
+    notes: d.notes
+      ? {
+          summary: d.notes.summary,
+          keyPoints: d.notes.keyPoints,
+          decisions: d.notes.decisions,
+          actionItems: d.notes.actionItems.map((a) => ({
+            text: a.text,
+            owner: a.owner ?? undefined,
+            due: a.due ?? undefined,
+            segmentIds: a.segmentIds,
+          })),
+          keywords: [],
+          version: d.notes.version,
+          language: d.notes.language,
+        }
+      : null,
     progress: { done: 0, total: 0 },
     recorded: {
       dir: d.meeting.dir,
@@ -112,8 +127,16 @@ export function useDevices() {
   });
 }
 
+/** Generates (or regenerates) notes; the meeting refetches with them. */
 export function useGenerateNotes() {
-  return useMutation({ mutationFn: (id: string) => backend.notesGenerate(id) });
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, outputLanguage }: { id: string; outputLanguage: string }) => {
+      if (isTauri()) await call(commands.notesGenerate(id, outputLanguage));
+      else await backend.notesGenerate(id);
+    },
+    onSuccess: (_, { id }) => void qc.invalidateQueries({ queryKey: queryKeys.meeting(id) }),
+  });
 }
 
 export function useRetryQueue() {

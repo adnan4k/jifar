@@ -34,6 +34,9 @@ export interface MeetingNotes {
   actionItems: { text: string; owner?: string; due?: string; segmentIds: string[] }[];
   /** Proposed FR-AI-07 (see PLAN.md §6). Not in the spec yet. */
   keywords: string[];
+  /** Saved version and its language (real meetings). */
+  version?: number;
+  language?: string;
 }
 
 export interface MeetingDetail extends MeetingSummary {

@@ -226,6 +226,8 @@ pub struct MeetingDetailDto {
     pub peaks: Vec<f32>,
     /// `mixed.opus` exists and can be played.
     pub has_audio: bool,
+    /// Latest notes version, if generated.
+    pub notes: Option<NotesDto>,
 }
 
 impl From<jifar_core::library::MeetingDetail> for MeetingDetailDto {
@@ -249,7 +251,70 @@ impl From<jifar_core::library::MeetingDetail> for MeetingDetailDto {
                 .collect(),
             peaks: d.peaks,
             has_audio: d.has_audio,
+            notes: d.notes.map(Into::into),
             meeting: d.meeting.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionDto {
+    pub text: String,
+    /// Transcript segments it came from (FR-AI-05).
+    pub segment_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionItemDto {
+    pub text: String,
+    pub owner: Option<String>,
+    pub due: Option<String>,
+    pub segment_ids: Vec<String>,
+}
+
+/// Meeting notes (FR-AI-01..05), one saved version.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct NotesDto {
+    pub version: u32,
+    /// Language the notes are written in.
+    pub language: String,
+    pub provider: Option<String>,
+    pub summary: String,
+    pub key_points: Vec<String>,
+    pub decisions: Vec<DecisionDto>,
+    pub action_items: Vec<ActionItemDto>,
+}
+
+impl From<jifar_core::notes::SavedNotes> for NotesDto {
+    fn from(s: jifar_core::notes::SavedNotes) -> Self {
+        let n = s.notes;
+        Self {
+            version: u32::try_from(s.version).unwrap_or(u32::MAX),
+            language: s.language,
+            provider: s.provider,
+            summary: n.summary,
+            key_points: n.key_points,
+            decisions: n
+                .decisions
+                .into_iter()
+                .map(|d| DecisionDto {
+                    text: d.text,
+                    segment_ids: d.segment_ids,
+                })
+                .collect(),
+            action_items: n
+                .action_items
+                .into_iter()
+                .map(|a| ActionItemDto {
+                    text: a.text,
+                    owner: a.owner,
+                    due: a.due,
+                    segment_ids: a.segment_ids,
+                })
+                .collect(),
         }
     }
 }

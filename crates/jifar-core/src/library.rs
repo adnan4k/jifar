@@ -33,6 +33,8 @@ pub struct MeetingDetail {
     pub peaks: Vec<f32>,
     /// `mixed.opus` exists, so the player can play it.
     pub has_audio: bool,
+    /// Latest notes version, if any.
+    pub notes: Option<crate::notes::SavedNotes>,
 }
 
 #[derive(Clone)]
@@ -70,11 +72,24 @@ impl Library {
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
         let has_audio = meeting.dir.join("mixed.opus").is_file();
+        // Saved notes were validated when generated; an unreadable row (e.g.
+        // from a newer schema) is skipped rather than failing the meeting.
+        let notes = d.notes.and_then(|n| {
+            serde_json::from_str(&n.body_json)
+                .ok()
+                .map(|notes| crate::notes::SavedNotes {
+                    version: n.version,
+                    language: n.language,
+                    provider: n.provider,
+                    notes,
+                })
+        });
         Ok(Some(MeetingDetail {
             meeting,
             segments: d.segments,
             peaks,
             has_audio,
+            notes,
         }))
     }
 

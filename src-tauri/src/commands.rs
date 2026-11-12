@@ -261,6 +261,23 @@ pub async fn meeting_delete(
     blocking(move || Ok(lib.delete(&meeting_id)?)).await
 }
 
+/// Generates notes from the saved transcript (FR-AI-01..03) and saves them
+/// as a new version. `outputLanguage` defaults to the meeting language.
+#[tauri::command]
+#[specta::specta]
+pub async fn notes_generate(
+    state: State<'_, AppState>,
+    meeting_id: String,
+    output_language: Option<String>,
+) -> Result<crate::dto::NotesDto, AppError> {
+    let notes = state.notes.clone();
+    let (svc, id, lang) = (notes.clone(), meeting_id.clone(), output_language);
+    let input = blocking(move || Ok(svc.prepare(&id, lang.as_deref())?)).await?;
+    let generated = notes.generate(&input).await?;
+    let saved = blocking(move || Ok(notes.save(&meeting_id, &input, generated)?)).await?;
+    Ok(saved.into())
+}
+
 pub(crate) fn notify(app: &AppHandle, meeting: &crate::dto::Meeting) {
     let _ = MeetingStatusChanged {
         meeting_id: meeting.id.clone(),

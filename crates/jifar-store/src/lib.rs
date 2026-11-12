@@ -90,11 +90,26 @@ pub struct SegmentRow {
     pub edited: bool,
 }
 
+/// One saved version of a meeting's notes (FR-AI-04).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NotesRow {
+    pub version: i64,
+    /// `ai` or `user`.
+    pub source: String,
+    pub provider: Option<String>,
+    pub language: String,
+    /// `MeetingNotes` JSON.
+    pub body_json: String,
+    pub created_at: i64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeetingDetail {
     pub meeting: Meeting,
     pub tracks: Vec<TrackRow>,
     pub segments: Vec<SegmentRow>,
+    /// Latest notes version, if any.
+    pub notes: Option<NotesRow>,
 }
 
 type Job = Box<dyn FnOnce(&mut Connection) + Send>;
@@ -343,10 +358,12 @@ impl Store {
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
+            let notes = latest_notes(c, &id)?;
             Ok(Some(MeetingDetail {
                 meeting,
                 tracks,
                 segments,
+                notes,
             }))
         })
     }
@@ -372,6 +389,51 @@ impl Store {
             }
             tx.commit()?;
             Ok(())
+        })
+    }
+
+    // ---- Notes --------------------------------------------------------------
+
+    /// Saves a new notes version (never overwrites an earlier one, so a
+    /// user's own version survives regeneration). Returns the version.
+    pub fn add_notes(
+        &self,
+        meeting_id: &str,
+        source: &str,
+        provider: Option<&str>,
+        language: &str,
+        body_json: &str,
+    ) -> Result<i64> {
+        let (meeting_id, source, provider, language, body) = (
+            meeting_id.to_owned(),
+            source.to_owned(),
+            provider.map(str::to_owned),
+            language.to_owned(),
+            body_json.to_owned(),
+        );
+        self.call(move |c| {
+            let tx = c.transaction()?;
+            let version: i64 = tx.query_row(
+                "SELECT COALESCE(MAX(version), 0) + 1 FROM notes WHERE meeting_id = ?1",
+                params![meeting_id],
+                |r| r.get(0),
+            )?;
+            tx.execute(
+                "INSERT INTO notes (id, meeting_id, version, source, provider, language, body_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    format!("{meeting_id}-notes-{version}"),
+                    meeting_id,
+                    version,
+                    source,
+                    provider,
+                    language,
+                    body,
+                    now_ms()
+                ],
+            )?;
+            tx.commit()?;
+            Ok(version)
         })
     }
 
@@ -408,6 +470,25 @@ impl Store {
             Ok(ids)
         })
     }
+}
+
+fn latest_notes(c: &Connection, meeting_id: &str) -> Result<Option<NotesRow>> {
+    Ok(c.query_row(
+        "SELECT version, source, provider, language, body_json, created_at FROM notes
+         WHERE meeting_id = ?1 ORDER BY version DESC LIMIT 1",
+        params![meeting_id],
+        |r| {
+            Ok(NotesRow {
+                version: r.get(0)?,
+                source: r.get(1)?,
+                provider: r.get(2)?,
+                language: r.get(3)?,
+                body_json: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        },
+    )
+    .optional()?)
 }
 
 fn meeting_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
@@ -556,6 +637,44 @@ mod tests {
         assert_eq!(ids(Some("gabaas")), vec!["b", "a"]);
         // FTS syntax characters are just text.
         assert!(ids(Some("\"AND -( *")).is_empty());
+    }
+
+    #[test]
+    fn notes_are_versioned_and_searchable() {
+        let s = Store::open_in_memory().unwrap();
+        s.create_meeting(meeting("m", "x", 1)).unwrap();
+        assert!(s.get_meeting("m").unwrap().unwrap().notes.is_none());
+        assert_eq!(
+            s.add_notes(
+                "m",
+                "ai",
+                Some("addis-llm"),
+                "om",
+                r#"{"summary":"Baajata ba'e"}"#
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            s.add_notes(
+                "m",
+                "ai",
+                Some("addis-llm"),
+                "en",
+                r#"{"summary":"Budget"}"#
+            )
+            .unwrap(),
+            2
+        );
+        let n = s.get_meeting("m").unwrap().unwrap().notes.unwrap();
+        assert_eq!((n.version, n.language.as_str()), (2, "en"));
+        // Deleting the meeting removes its notes too.
+        s.delete("m").unwrap();
+        assert_eq!(
+            s.call(|c| Ok(c.query_row("SELECT COUNT(*) FROM notes", [], |r| r.get::<_, i64>(0))?))
+                .unwrap(),
+            0
+        );
     }
 
     #[test]

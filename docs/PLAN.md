@@ -121,7 +121,7 @@ UI:
 Goal: turn transcripts into useful notes, and make history searchable and exportable.
 
 - [ ] **Close OQ-3 first:** shortlist 2–3 LLMs, run them on ≥ 10 eval meetings with the §9 rubric, pick one.
-- [ ] `NotesProvider` implementation. Prompt produces `MeetingNotes` JSON. (Addis AI LLM candidate built 2026-11-11: `AddisNotes`, strict parse + retry + summary-only fallback, 5 contract tests; see `providers/addis-scribe.md` §8. Not yet wired to the UI, and not evaluated.) Strict serde validation, then retry, then degrade gracefully. Output in the meeting language, or English on request. **FR-AI-01, FR-AI-02, FR-AI-03**
+- [ ] `NotesProvider` implementation. Prompt produces `MeetingNotes` JSON. (Addis AI LLM candidate built 2026-11-11: `AddisNotes`, strict parse + retry + summary-only fallback, 5 contract tests; see `providers/addis-scribe.md` §8. Wired 2026-11-11: `notes_generate`, notes saved as versions in `notes`, panel with Afaan Oromo / English choice and clickable citations. Not yet evaluated (OQ-3).) Strict serde validation, then retry, then degrade gracefully. Output in the meeting language, or English on request. **FR-AI-01, FR-AI-02, FR-AI-03**
 - [ ] Segment references in decisions and action items, rendered as links that jump to the transcript. **FR-AI-05**
 - [ ] Notes versioning: regenerating creates a new `ai` version, and user edits create a `user` version that is never overwritten. **FR-AI-04**
 - [ ] Transcript editing (`edited` flag, `original_text` kept). Re-processing skips edited segments unless the user confirms. **FR-TRN-05**
