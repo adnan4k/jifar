@@ -48,10 +48,11 @@ These answer the open questions in the product scope. Each one can be revisited,
 | D9 | Summaries              | Generated after the meeting, can be regenerated                         | Needs the full transcript |
 | D10| Pricing                | Free first. Local AI is the long-term way to keep costs down            | — |
 | D11| Stack                  | **Tauri 2 + Rust core + React/TS UI** (see §5a)                         | One small native binary, real-time-safe audio, and a direct path to local AI |
+| D12| Tasks                  | **A local checklist of follow-ups from your own meetings** (FR-AI-08). No projects, boards, assignment, reminders, sync or external task tools | Action items are the point of the notes (§1); ticking them off closes the loop without becoming a task manager |
 
 ## 4. Out of scope (V1)
 
-Real-time / near-live transcription during recording (deferred, see D1) · team collaboration and shared workspaces · cloud dashboard and accounts · automatic meeting detection · calendar integrations · meeting bots · project and task management · mobile app · Windows and macOS.
+Real-time / near-live transcription during recording (deferred, see D1) · team collaboration and shared workspaces · cloud dashboard and accounts · automatic meeting detection · calendar integrations · meeting bots · project and task management (boards, projects, assignment, reminders, external task tools; the local follow-up checklist in D12 / FR-AI-08 is in scope) · mobile app · Windows and macOS.
 
 ---
 
@@ -98,6 +99,7 @@ Priority: **P0** = required for V1 release, **P1** = should ship with V1, **P2**
 | FR-AI-04   | P1  | Regenerate notes. User edits to notes are kept as a separate, user-owned version. |
 | FR-AI-05   | P1  | Each decision and action item links to the transcript segment(s) it came from. |
 | FR-AI-06   | P2  | Speaker diarization within the `system` track (beyond Me/Others). |
+| FR-AI-08   | P1  | Add action items, decisions or key points from notes, any text selected in the summary, notes or transcript, or a task typed by hand, to a local task list. Tasks are copies: regenerating notes never changes them. Tick off, edit and delete tasks across meetings; each links back to its source segment. Owner and due date stay free text. Deleting a meeting deletes its tasks, and the confirmation says so (D12). |
 
 ### 5.4 History & organization (`FR-HIS`)
 
@@ -189,6 +191,11 @@ Commands (all `async`, returning `Result<T, AppError>`):
 | `meeting_rename` / `meeting_delete` | `{meetingId, title}` / `{meetingId}` | `()`. Delete removes the database rows and `meetings/<id>/` (UI confirms with a second click; refused while that meeting records) |
 | `segment_update`       | `{segmentId, text}`                          | `Segment` |
 | `notes_generate`       | `{meetingId, outputLanguage?}`               | `Notes {version, language, provider, summary, keyPoints[], decisions[], actionItems[]}`, saved as a new `ai` version. Errors `provider_auth` / `provider_credits` / `provider_unavailable` / `provider_failed` |
+| `tasks_list`           | `{filter: open\|done\|all, meetingId?, query?}` | `Task[]`: open first, then newest. Each `{id, meetingId?, meetingTitle?, text, owner?, due?, done, doneAt?, sourceKind, sourceVersion?, segmentIds[], sourceStartMs?, matchKey, createdAt}`. `query` matches task words (FTS) (FR-AI-08) |
+| `tasks_add`            | `{items: NewTask[]}`, each `{meetingId?, text, owner?, due?, sourceKind: action_item\|decision\|key_point\|summary\|transcript\|manual, sourceVersion?, segmentIds[]}` | `Task[]`, one per item. An item already in tasks (same meeting, kind and `matchKey`) returns the existing task instead of a copy |
+| `task_update`          | `{taskId, patch: {text?, owner?, due?, done?}}` | `Task`. An empty `owner`/`due` clears it; `done` stamps or clears `doneAt`. Error `task_not_found` |
+| `task_delete`          | `{taskId}`                                   | `()` |
+| `tasks_counts`         | —                                            | `{open, done}` |
 | `search`               | `{query, limit}`                             | `SearchHit[]` |
 | `export_meeting`       | `{meetingId, format, path}`                  | `()` |
 | `queue_retry`          | `{meetingId}`                                | `()`. Re-runs unfinished chunks; finished ones aren't sent again (idempotent request IDs) |
@@ -306,7 +313,14 @@ segments(id TEXT PK, meeting_id TEXT FK, track TEXT, speaker TEXT,
 notes(id TEXT PK, meeting_id TEXT FK, version INTEGER, source TEXT CHECK(source IN ('ai','user')),
       provider TEXT, language TEXT, body_json TEXT, created_at INTEGER)
 
-segments_fts / notes_fts  -- FTS5 external-content tables, unicode61 tokenizer
+tasks(id TEXT PK, meeting_id TEXT FK NULL ON DELETE CASCADE, text TEXT, owner TEXT, due TEXT,
+      done INTEGER, done_at INTEGER, source_kind TEXT CHECK(source_kind IN
+      ('action_item','decision','key_point','summary','transcript','manual')), source_version INTEGER,
+      segment_ids TEXT, match_key TEXT, created_at INTEGER, updated_at INTEGER)
+      -- match_key: the source text trimmed, whitespace collapsed (case and
+      -- apostrophes kept); unique per (meeting, kind) except manual tasks
+
+segments_fts / notes_fts / tasks_fts  -- FTS5 external-content tables, unicode61 tokenizer
                           -- with tokenchars "'" so Qubee words like ba'e stay whole
 ```
 

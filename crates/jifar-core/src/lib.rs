@@ -8,4 +8,5 @@ pub mod paths;
 pub mod provider_keys;
 pub mod recording;
 pub mod settings;
+pub mod tasks;
 pub mod transcription;

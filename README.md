@@ -1,32 +1,62 @@
 # Jifar
 
-**Private meeting recorder and Afaan Oromo transcription and notes for Linux.**
+**Private meeting recorder with Afaan Oromo transcription, AI notes and task tracking for Linux.**
 
-Jifar records your meetings (your microphone and the other participants' audio, on separate tracks), transcribes them in Afaan Oromo, and turns the transcript into a summary with key points, decisions and action items. Everything is stored on your computer. There's no account and no telemetry, and your recordings are never uploaded to Jifar servers.
+Jifar records your meetings (microphone and system audio on separate, time-aligned tracks), transcribes them in Afaan Oromo, and turns the transcript into a structured summary with key points, decisions and action items. Notes items can be added to a local task checklist so nothing falls through the cracks. Everything is stored on your computer — no account, no telemetry, and your recordings are never uploaded.
 
 ![Jifar UI reference](docs/design/reference-ui.png)
 
-> **Status: early development (pre-V1).** The UI shell runs on mock data, and the Rust core is scaffolded. Audio capture (M1) is next. See [the plan](docs/PLAN.md).
+> **Status: early development (pre-V1).** M0 (foundations) and M1 (audio capture) are complete. M2 (transcription pipeline) and M3/M4 (desktop shell and intelligence) are in progress. The UI shell runs with mock data and real-backend wiring is underway. See [the plan](docs/PLAN.md).
 
-## Features (V1 target)
+## Features
 
-- **Record**: manual start/stop from the app or the system tray. Mic and system audio go to separate, time-aligned Opus tracks. Recording never needs the internet.
-- **Transcribe**: Afaan Oromo transcription **after the meeting ends**, with automatic retry if you're offline. Segments are labelled *Me* / *Others* and you can edit them.
-- **Notes**: summary, key points, decisions and action items, each linked back to the transcript.
-- **History**: search across all meetings, playback from any segment, export to Markdown or text.
-- **Private by default**: local storage under `~/.local/share/jifar`, API keys in the OS keyring, no telemetry.
+### Recording
+- Manual start / stop / pause from the app or the system tray.
+- Mic and system audio captured to separate, drift-corrected Opus tracks via PipeWire (PulseAudio fallback planned).
+- Recording never needs the internet — it works fully offline.
+- Crash-safe: an interrupted recording is recovered on restart, losing at most ~5 s of audio.
+- Per-track audio levels (~10 Hz) and silence detection.
+- Device enumeration and selection.
 
-Out of scope for V1: real-time transcription, accounts, team features, cloud sync, calendar or bots, Windows/macOS. See [SPEC §4](docs/SPEC.md#4-out-of-scope-v1).
+### Transcription
+- Afaan Oromo transcription **after the meeting ends**, powered by Addis Scribe ASR.
+- Offline VAD chunking (Silero ONNX) splits audio into 15–30 s segments at silence boundaries.
+- Automatic retry with exponential backoff when the network is unavailable.
+- Segments labelled *Me* / *Others* (by track) and editable after transcription.
+
+### AI Notes
+- LLM-generated summary, key points, decisions and action items, each linked back to the transcript.
+- Notes produced in Afaan Oromo or English, selectable per meeting.
+- Regenerating creates a new version; user edits are never overwritten.
+
+### Tasks from Notes
+- Action items, decisions and key points from AI notes can be added to a local task checklist — individually or all at once.
+- Tasks can also be typed by hand, with an optional owner and due date.
+- Duplicate detection: re-generating notes won't create duplicate tasks (matched by content).
+- Tasks are searchable, filterable (open / done / all) and included in meeting search results.
+- Deleting a meeting cascades to its tasks; standalone tasks are kept.
+- Jump-to-source links take you from a task back to the transcript segment it came from.
+
+### History & Search
+- Full-text search across meeting titles, transcripts, notes and tasks (SQLite FTS5).
+- Audio playback with click-to-seek from any transcript segment.
+- Export to Markdown or plain text.
+
+### Privacy
+- Local storage under `~/.local/share/jifar`; API keys in the OS keyring (libsecret).
+- No telemetry, no accounts, no cloud sync.
+
+**Out of scope for V1:** real-time transcription, team features, cloud sync, calendar or bots, Windows / macOS. See [SPEC §4](docs/SPEC.md#4-out-of-scope-v1).
 
 ## Tech stack
 
 | Layer | Choice |
 | ----- | ------ |
 | App shell | [Tauri 2](https://tauri.app) (WebKitGTK on Linux) |
-| Core | Rust (edition 2024): PipeWire/PulseAudio capture, Opus, SQLite + FTS5 |
-| UI | React, TypeScript, Vite, Tailwind CSS v4, shadcn/ui, TanStack Query, Zustand |
+| Core | Rust (edition 2024): PipeWire capture, Opus encoding, Silero VAD (ONNX Runtime), SQLite + FTS5 |
+| UI | React 19, TypeScript, Vite, Tailwind CSS v4, shadcn/ui, TanStack Query, Zustand |
 | IPC | Typed Rust ↔ TS bindings generated by [tauri-specta](https://github.com/specta-rs/tauri-specta) |
-| AI | Pluggable providers: Addis Scribe (ASR) and a cloud LLM first, local models later |
+| AI | Pluggable providers: Addis Scribe (ASR) and an OpenAI-compatible LLM for notes — local models planned after V1 |
 
 ## Getting started
 
@@ -74,15 +104,17 @@ scripts/check-deps.sh                              # recording must not depend o
 
 ```
 crates/
-  jifar-audio/      capture → ring buffer → Opus; offline VAD chunking
-  jifar-store/      SQLite, migrations, full-text search
+  jifar-audio/      capture → ring buffer → Opus; offline VAD chunking (Silero ONNX)
+  jifar-store/      SQLite, migrations, FTS5 search, task storage
   jifar-queue/      persistent transcription job queue with retries
   jifar-providers/  ASR / notes provider traits + implementations (only crate with network access)
-  jifar-core/       domain types, orchestration, XDG paths
+  jifar-core/       domain types, orchestration, XDG paths, task management
 src-tauri/          Tauri app: commands, window, tray (thin layer over the crates)
 src/                React UI
-  bindings.ts       generated by tauri-specta. Do not edit
+  bindings.ts       generated by tauri-specta — do not edit
   lib/mock-backend.ts  in-browser stand-in for the Rust core
+  lib/tasks.ts      client-side task match-key logic (mirrors jifar-core)
+  components/notes/ AI notes panel with "add to tasks" integration
 docs/
   SPEC.md           requirements and architecture (source of truth)
   PLAN.md           milestones, tasks, risks, decision log

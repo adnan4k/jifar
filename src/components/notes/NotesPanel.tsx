@@ -1,10 +1,21 @@
-import { CornerDownRight, Loader2, RefreshCw, Settings, Sparkles } from "lucide-react";
+import {
+  Check,
+  CornerDownRight,
+  ListPlus,
+  Loader2,
+  RefreshCw,
+  Settings,
+  Sparkles,
+} from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { SelectionToTask } from "@/components/tasks/SelectionToTask";
 import { Button } from "@/components/ui/button";
 import { CoreError, describeError } from "@/lib/native";
 import { isTauri } from "@/lib/platform";
-import { useGenerateNotes, useMeeting } from "@/lib/queries";
-import type { MeetingDetail, MeetingNotes } from "@/lib/types";
+import { useAddTasks, useGenerateNotes, useMeeting, useMeetingTasks } from "@/lib/queries";
+import { addedKeys, taskKey } from "@/lib/tasks";
+import type { MeetingDetail, MeetingNotes, NewTask, TaskSourceKind } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { useUi } from "@/stores/ui";
 
 export function NotesPanel() {
@@ -147,16 +158,67 @@ function Notes({ notes, meeting }: { notes: MeetingNotes; meeting: MeetingDetail
     if (seg) seek(seg.startMs);
   };
 
+  // Tasks from these notes (FR-AI-08). Tasks are copies, so they stay
+  // marked across regenerations that produce the same item.
+  const { data: tasks = [] } = useMeetingTasks(meeting.id);
+  const added = addedKeys(tasks);
+  const add = useAddTasks();
+  const item = (
+    sourceKind: TaskSourceKind,
+    text: string,
+    segmentIds: string[],
+    owner?: string,
+    due?: string,
+  ): NewTask => ({
+    meetingId: meeting.id,
+    text,
+    owner,
+    due,
+    sourceKind,
+    sourceVersion: notes.version ?? null,
+    segmentIds,
+  });
+  const isAdded = (kind: TaskSourceKind, text: string) => added.has(taskKey(kind, text));
+  const pendingKeys = new Set(
+    add.isPending ? (add.variables ?? []).map((v) => taskKey(v.sourceKind, v.text)) : [],
+  );
+  const addButton = (n: NewTask, subtle: boolean) => (
+    <AddToTasks
+      added={isAdded(n.sourceKind, n.text)}
+      pending={pendingKeys.has(taskKey(n.sourceKind, n.text))}
+      subtle={subtle}
+      onAdd={() => add.mutate([n])}
+    />
+  );
+  const missing = notes.actionItems
+    .filter((a) => !isAdded("action_item", a.text))
+    .map((a) => item("action_item", a.text, a.segmentIds, a.owner, a.due));
+
   return (
-    <>
-      <Section title="Summary">
-        <p className="text-sm leading-relaxed text-fg/90">{notes.summary}</p>
+    // Select any text (summary included) to add it as a task.
+    <SelectionToTask
+      meetingId={meeting.id}
+      sourceVersion={notes.version ?? null}
+      kind="summary"
+      className="space-y-6"
+    >
+      <Section
+        title="Summary"
+        action={<span className="text-xs text-muted">Select text to add a task</span>}
+      >
+        <p data-task-kind="summary" className="text-sm leading-relaxed text-fg/90">
+          {notes.summary}
+        </p>
       </Section>
 
       <Section title="Key points">
-        <ul className="list-disc space-y-1.5 pl-5 text-sm text-fg/90 marker:text-accent">
+        <ul className="space-y-1.5 text-sm text-fg/90">
           {notes.keyPoints.map((p) => (
-            <li key={p}>{p}</li>
+            <li key={p} data-task-kind="key_point" className="group flex items-start gap-2">
+              <span className="mt-2 size-1.5 shrink-0 rounded-full bg-accent" />
+              <span className="min-w-0 flex-1">{p}</span>
+              {addButton(item("key_point", p, []), true)}
+            </li>
           ))}
         </ul>
       </Section>
@@ -164,17 +226,42 @@ function Notes({ notes, meeting }: { notes: MeetingNotes; meeting: MeetingDetail
       <Section title="Decisions">
         <ul className="space-y-2">
           {notes.decisions.map((d) => (
-            <li key={d.text}>
+            <li
+              key={d.text}
+              data-task-kind="decision"
+              data-segment-ids={d.segmentIds.join(" ")}
+              className="group flex items-start gap-1"
+            >
               <SourceLink onClick={() => jump(d.segmentIds)}>{d.text}</SourceLink>
+              {addButton(item("decision", d.text, d.segmentIds), true)}
             </li>
           ))}
         </ul>
       </Section>
 
-      <Section title="Action items">
+      <Section
+        title="Action items"
+        action={
+          notes.actionItems.length > 0 && (
+            <button
+              type="button"
+              onClick={() => add.mutate(missing)}
+              disabled={missing.length === 0 || add.isPending}
+              className="rounded-md px-1.5 py-0.5 text-xs font-medium text-accent transition-colors hover:bg-accent-soft disabled:pointer-events-none disabled:text-muted"
+            >
+              {missing.length === 0 ? "All in tasks" : "Add all to tasks"}
+            </button>
+          )
+        }
+      >
         <ul className="space-y-2">
           {notes.actionItems.map((a) => (
-            <li key={a.text}>
+            <li
+              key={a.text}
+              data-task-kind="action_item"
+              data-segment-ids={a.segmentIds.join(" ")}
+              className="group flex items-start gap-1"
+            >
               <SourceLink onClick={() => jump(a.segmentIds)}>
                 <span>{a.text}</span>
                 {(a.owner || a.due) && (
@@ -183,14 +270,18 @@ function Notes({ notes, meeting }: { notes: MeetingNotes; meeting: MeetingDetail
                   </span>
                 )}
               </SourceLink>
+              {addButton(item("action_item", a.text, a.segmentIds, a.owner, a.due), false)}
             </li>
           ))}
         </ul>
+        {add.isError && (
+          <p className="text-xs text-warn">Couldn't add to tasks: {describeError(add.error)}</p>
+        )}
       </Section>
 
       {notes.keywords.length > 0 && (
         <Section title="Keywords">
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 select-none">
             {notes.keywords.map((k) => (
               <span key={k} className="rounded-md border bg-card px-2 py-1 text-xs text-fg/90">
                 {k}
@@ -199,16 +290,62 @@ function Notes({ notes, meeting }: { notes: MeetingNotes; meeting: MeetingDetail
           </div>
         </Section>
       )}
-    </>
+    </SelectionToTask>
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section className="space-y-2.5 border-b pb-5 last-of-type:border-0">
-      <h3 className="text-sm font-semibold">{title}</h3>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        {action}
+      </div>
       {children}
     </section>
+  );
+}
+
+// Adds one notes item to tasks. Once added it shows a check; clicking that
+// opens the Tasks view. `subtle` items (key points, decisions) show the
+// button on hover only.
+function AddToTasks({
+  added,
+  pending,
+  subtle,
+  onAdd,
+}: {
+  added: boolean;
+  pending: boolean;
+  subtle: boolean;
+  onAdd: () => void;
+}) {
+  const label = added ? "In tasks: open Tasks" : "Add to tasks";
+  return (
+    <button
+      type="button"
+      onClick={added ? () => useUi.getState().setView("tasks") : onAdd}
+      disabled={pending}
+      aria-label={label}
+      title={label}
+      className={cn(
+        "grid size-6 shrink-0 place-items-center rounded-md transition-all focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:outline-none [&_svg]:size-3.5",
+        added
+          ? "text-accent hover:bg-accent-soft"
+          : "text-muted hover:bg-card-hover hover:text-accent",
+        subtle && !added && !pending && "opacity-0 group-hover:opacity-100",
+      )}
+    >
+      {pending ? <Loader2 className="animate-spin" /> : added ? <Check /> : <ListPlus />}
+    </button>
   );
 }
 
@@ -216,11 +353,12 @@ function SourceLink({ children, onClick }: { children: ReactNode; onClick: () =>
   return (
     <button
       type="button"
-      onClick={onClick}
+      // A drag that selected text (to add it as a task) isn't a jump.
+      onClick={() => window.getSelection()?.isCollapsed !== false && onClick()}
       title="Jump to transcript"
-      className="group flex w-full gap-2 rounded-md p-1 -m-1 text-left text-sm text-fg/90 hover:bg-card-hover"
+      className="group/link flex min-w-0 flex-1 select-text gap-2 rounded-md p-1 -m-1 text-left text-sm text-fg/90 hover:bg-card-hover"
     >
-      <CornerDownRight className="mt-0.5 size-3.5 shrink-0 text-muted group-hover:text-accent" />
+      <CornerDownRight className="mt-0.5 size-3.5 shrink-0 text-muted group-hover/link:text-accent" />
       <span>{children}</span>
     </button>
   );

@@ -51,6 +51,17 @@ export const commands = {
 	 *  as a new version. `outputLanguage` defaults to the meeting language.
 	 */
 	notesGenerate: (meetingId: string, outputLanguage: string | null) => typedError<NotesDto_Serialize, AppError>(__TAURI_INVOKE("notes_generate", { meetingId, outputLanguage })),
+	/**  Tasks across meetings, open first, then newest. `query` matches task words. */
+	tasksList: (filter: TaskFilterDto, meetingId: string | null, query: string | null) => typedError<TaskDto_Serialize[], AppError>(__TAURI_INVOKE("tasks_list", { filter, meetingId, query })),
+	/**
+	 *  Adds notes items (or typed tasks). Items already added return the
+	 *  existing task.
+	 */
+	tasksAdd: (items: NewTaskDto_Deserialize[]) => typedError<TaskDto_Serialize[], AppError>(__TAURI_INVOKE("tasks_add", { items })),
+	taskUpdate: (taskId: string, patch: TaskPatchDto_Deserialize) => typedError<TaskDto_Serialize, AppError>(__TAURI_INVOKE("task_update", { taskId, patch })),
+	taskDelete: (taskId: string) => typedError<null, AppError>(__TAURI_INVOKE("task_delete", { taskId })),
+	/**  Open and done totals, for the sidebar badge. */
+	tasksCounts: () => typedError<TaskCounts, AppError>(__TAURI_INVOKE("tasks_counts")),
 };
 
 /** Events */
@@ -201,7 +212,9 @@ export type ErrorCode = "internal" | "paths_unavailable" |
 /**  Offline or the provider is busy; try again later. */
 "provider_unavailable" | 
 /**  The provider couldn't do this request (e.g. invalid output twice). */
-"provider_failed";
+"provider_failed" | 
+/**  The task ID doesn't exist (deleted elsewhere). */
+"task_not_found";
 
 export type KeyTestStatus = "ok" | "no_key" | "invalid_key" | "no_credits" | "unreachable" | "failed";
 
@@ -255,6 +268,28 @@ export type MeetingStatusChanged = {
 };
 
 export type MeetingStatusDto = "recording" | "processing" | "ready" | "needs_attention";
+
+export type NewTaskDto = NewTaskDto_Serialize | NewTaskDto_Deserialize;
+
+export type NewTaskDto_Deserialize = {
+	meetingId?: string | null,
+	text: string,
+	owner?: string | null,
+	due?: string | null,
+	sourceKind: TaskSourceKind,
+	sourceVersion?: number | null,
+	segmentIds: string[],
+};
+
+export type NewTaskDto_Serialize = {
+	meetingId: string | null,
+	text: string,
+	owner: string | null,
+	due: string | null,
+	sourceKind: TaskSourceKind,
+	sourceVersion: number | null,
+	segmentIds: string[],
+};
 
 /**  Meeting notes (FR-AI-01..05), one saved version. */
 export type NotesDto = NotesDto_Serialize | NotesDto_Deserialize;
@@ -378,6 +413,92 @@ export type Settings_Serialize = {
 	sinkDevice: string | null,
 	language: string,
 };
+
+export type TaskCounts = {
+	open: number,
+	done: number,
+};
+
+export type TaskDto = TaskDto_Serialize | TaskDto_Deserialize;
+
+export type TaskDto_Deserialize = {
+	id: string,
+	/**  `None` for a task typed by hand without a meeting. */
+	meetingId?: string | null,
+	meetingTitle?: string | null,
+	text: string,
+	owner?: string | null,
+	due?: string | null,
+	done: boolean,
+	/**  Epoch ms. */
+	doneAt?: number | null,
+	sourceKind: TaskSourceKind,
+	sourceVersion?: number | null,
+	segmentIds: string[],
+	/**  Where "jump to source" seeks to, if the segment still exists. */
+	sourceStartMs?: number | null,
+	/**
+	 *  Source text, trimmed and whitespace-collapsed: how notes items are
+	 *  recognised as already added.
+	 */
+	matchKey: string,
+	/**  Epoch ms. */
+	createdAt: number | null,
+};
+
+export type TaskDto_Serialize = {
+	id: string,
+	/**  `None` for a task typed by hand without a meeting. */
+	meetingId: string | null,
+	meetingTitle: string | null,
+	text: string,
+	owner: string | null,
+	due: string | null,
+	done: boolean,
+	/**  Epoch ms. */
+	doneAt: number | null,
+	sourceKind: TaskSourceKind,
+	sourceVersion: number | null,
+	segmentIds: string[],
+	/**  Where "jump to source" seeks to, if the segment still exists. */
+	sourceStartMs: number | null,
+	/**
+	 *  Source text, trimmed and whitespace-collapsed: how notes items are
+	 *  recognised as already added.
+	 */
+	matchKey: string,
+	/**  Epoch ms. */
+	createdAt: number | null,
+};
+
+export type TaskFilterDto = "open" | "done" | "all";
+
+/**  Fields to change. Omitted fields stay; an empty `owner`/`due` clears it. */
+export type TaskPatchDto = TaskPatchDto_Serialize | TaskPatchDto_Deserialize;
+
+/**  Fields to change. Omitted fields stay; an empty `owner`/`due` clears it. */
+export type TaskPatchDto_Deserialize = {
+	text?: string | null,
+	owner?: string | null,
+	due?: string | null,
+	done?: boolean | null,
+};
+
+/**  Fields to change. Omitted fields stay; an empty `owner`/`due` clears it. */
+export type TaskPatchDto_Serialize = {
+	text: string | null,
+	owner: string | null,
+	due: string | null,
+	done: boolean | null,
+};
+
+export type TaskSourceKind = "action_item" | "decision" | "key_point" | 
+/**  Text selected in the summary. */
+"summary" | 
+/**  Text selected in the transcript. */
+"transcript" | 
+/**  Typed by hand. */
+"manual";
 
 export type TrackDto = "mic" | "system";
 

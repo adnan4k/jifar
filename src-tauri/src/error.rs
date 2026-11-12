@@ -32,6 +32,8 @@ pub enum ErrorCode {
     ProviderUnavailable,
     /// The provider couldn't do this request (e.g. invalid output twice).
     ProviderFailed,
+    /// The task ID doesn't exist (deleted elsewhere).
+    TaskNotFound,
 }
 
 #[derive(Debug, thiserror::Error, Serialize, specta::Type)]
@@ -87,6 +89,19 @@ impl From<jifar_core::library::LibraryError> for AppError {
             LibraryError::NotFound(_) => ErrorCode::MeetingNotFound,
             LibraryError::EmptyTitle => ErrorCode::InvalidInput,
             LibraryError::Store(_) | LibraryError::Io(_) => ErrorCode::StorageFailed,
+        };
+        Self::new(code, e.to_string())
+    }
+}
+
+impl From<jifar_core::tasks::TasksError> for AppError {
+    fn from(e: jifar_core::tasks::TasksError) -> Self {
+        use jifar_core::tasks::TasksError;
+        let code = match &e {
+            TasksError::NotFound(_) => ErrorCode::TaskNotFound,
+            TasksError::MeetingNotFound(_) => ErrorCode::MeetingNotFound,
+            TasksError::EmptyText => ErrorCode::InvalidInput,
+            TasksError::Store(_) => ErrorCode::StorageFailed,
         };
         Self::new(code, e.to_string())
     }

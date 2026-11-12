@@ -318,3 +318,163 @@ impl From<jifar_core::notes::SavedNotes> for NotesDto {
         }
     }
 }
+
+// ---- Tasks (FR-AI-08) -------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskSourceKind {
+    ActionItem,
+    Decision,
+    KeyPoint,
+    /// Text selected in the summary.
+    Summary,
+    /// Text selected in the transcript.
+    Transcript,
+    /// Typed by hand.
+    Manual,
+}
+
+impl From<TaskSourceKind> for jifar_core::tasks::SourceKind {
+    fn from(k: TaskSourceKind) -> Self {
+        match k {
+            TaskSourceKind::ActionItem => Self::ActionItem,
+            TaskSourceKind::Decision => Self::Decision,
+            TaskSourceKind::KeyPoint => Self::KeyPoint,
+            TaskSourceKind::Summary => Self::Summary,
+            TaskSourceKind::Transcript => Self::Transcript,
+            TaskSourceKind::Manual => Self::Manual,
+        }
+    }
+}
+
+impl From<jifar_core::tasks::SourceKind> for TaskSourceKind {
+    fn from(k: jifar_core::tasks::SourceKind) -> Self {
+        use jifar_core::tasks::SourceKind as K;
+        match k {
+            K::ActionItem => Self::ActionItem,
+            K::Decision => Self::Decision,
+            K::KeyPoint => Self::KeyPoint,
+            K::Summary => Self::Summary,
+            K::Transcript => Self::Transcript,
+            K::Manual => Self::Manual,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskFilterDto {
+    Open,
+    Done,
+    All,
+}
+
+impl From<TaskFilterDto> for jifar_store::TaskFilter {
+    fn from(f: TaskFilterDto) -> Self {
+        match f {
+            TaskFilterDto::Open => Self::Open,
+            TaskFilterDto::Done => Self::Done,
+            TaskFilterDto::All => Self::All,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDto {
+    pub id: String,
+    /// `None` for a task typed by hand without a meeting.
+    pub meeting_id: Option<String>,
+    pub meeting_title: Option<String>,
+    pub text: String,
+    pub owner: Option<String>,
+    pub due: Option<String>,
+    pub done: bool,
+    /// Epoch ms.
+    pub done_at: Option<f64>,
+    pub source_kind: TaskSourceKind,
+    pub source_version: Option<u32>,
+    pub segment_ids: Vec<String>,
+    /// Where "jump to source" seeks to, if the segment still exists.
+    pub source_start_ms: Option<f64>,
+    /// Source text, trimmed and whitespace-collapsed: how notes items are
+    /// recognised as already added.
+    pub match_key: String,
+    /// Epoch ms.
+    pub created_at: f64,
+}
+
+impl From<jifar_core::tasks::Task> for TaskDto {
+    fn from(t: jifar_core::tasks::Task) -> Self {
+        Self {
+            id: t.id,
+            meeting_id: t.meeting_id,
+            meeting_title: t.meeting_title,
+            text: t.text,
+            owner: t.owner,
+            due: t.due,
+            done: t.done,
+            done_at: t.done_at_ms.map(|v| v as f64),
+            source_kind: t.source_kind.into(),
+            source_version: t.source_version.and_then(|v| u32::try_from(v).ok()),
+            segment_ids: t.segment_ids,
+            source_start_ms: t.source_start_ms.map(|v| v as f64),
+            match_key: t.match_key,
+            created_at: t.created_at_ms as f64,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct NewTaskDto {
+    pub meeting_id: Option<String>,
+    pub text: String,
+    pub owner: Option<String>,
+    pub due: Option<String>,
+    pub source_kind: TaskSourceKind,
+    pub source_version: Option<u32>,
+    pub segment_ids: Vec<String>,
+}
+
+impl From<NewTaskDto> for jifar_core::tasks::NewTask {
+    fn from(t: NewTaskDto) -> Self {
+        Self {
+            meeting_id: t.meeting_id,
+            text: t.text,
+            owner: t.owner,
+            due: t.due,
+            source_kind: t.source_kind.into(),
+            source_version: t.source_version.map(i64::from),
+            segment_ids: t.segment_ids,
+        }
+    }
+}
+
+/// Fields to change. Omitted fields stay; an empty `owner`/`due` clears it.
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPatchDto {
+    pub text: Option<String>,
+    pub owner: Option<String>,
+    pub due: Option<String>,
+    pub done: Option<bool>,
+}
+
+impl From<TaskPatchDto> for jifar_core::tasks::TaskChanges {
+    fn from(p: TaskPatchDto) -> Self {
+        Self {
+            text: p.text,
+            owner: p.owner,
+            due: p.due,
+            done: p.done,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct TaskCounts {
+    pub open: u32,
+    pub done: u32,
+}

@@ -16,7 +16,15 @@ use rusqlite::{Connection, OptionalExtension, params};
 use rusqlite_migration::{M, Migrations};
 use tracing::{info, warn};
 
-const MIGRATIONS: &[M<'static>] = &[M::up(include_str!("../migrations/001_initial.sql"))];
+mod tasks;
+
+pub use tasks::{NewTaskRow, TaskFilter, TaskPatch, TaskRow};
+
+const MIGRATIONS: &[M<'static>] = &[
+    M::up(include_str!("../migrations/001_initial.sql")),
+    M::up(include_str!("../migrations/002_tasks.sql")),
+    M::up(include_str!("../migrations/003_task_sources.sql")),
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -28,6 +36,8 @@ pub enum StoreError {
     Closed,
     #[error("meeting {0} not found")]
     NotFound(String),
+    #[error("task {0} not found")]
+    TaskNotFound(String),
 }
 
 pub type Result<T, E = StoreError> = std::result::Result<T, E>;
@@ -280,8 +290,8 @@ impl Store {
         })
     }
 
-    /// Newest first. `query` matches titles (substring) and transcript text
-    /// (full-text, whole Qubee words).
+    /// Newest first. `query` matches titles (substring), and transcript and
+    /// task text (full-text, whole Qubee words).
     pub fn list_meetings(&self, query: Option<&str>, limit: u32) -> Result<Vec<Meeting>> {
         let query = query
             .map(str::trim)
@@ -304,6 +314,9 @@ impl Store {
                             OR id IN (SELECT s.meeting_id FROM segments_fts f
                                       JOIN segments s ON s.rowid = f.rowid
                                       WHERE segments_fts MATCH ?2)
+                            OR id IN (SELECT t.meeting_id FROM tasks_fts f
+                                      JOIN tasks t ON t.rowid = f.rowid
+                                      WHERE tasks_fts MATCH ?2)
                          ORDER BY started_at DESC LIMIT ?3",
                     )?;
                     st.query_map(params![q, fts_query(&q), limit], meeting_row)?
@@ -504,7 +517,7 @@ fn meeting_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
 
 /// A safe FTS5 query: each word quoted (so `ba'e`, `-` or `"` in the search
 /// box never become FTS syntax), the last one as a prefix.
-fn fts_query(q: &str) -> String {
+pub(crate) fn fts_query(q: &str) -> String {
     let words: Vec<String> = q
         .split_whitespace()
         .map(|w| format!("\"{}\"", w.replace('"', "\"\"")))
@@ -519,7 +532,7 @@ fn fts_query(q: &str) -> String {
     }
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
@@ -700,6 +713,53 @@ mod tests {
             s.get_meeting("half").unwrap().unwrap().meeting.status,
             Status::NeedsAttention
         );
+    }
+
+    #[test]
+    fn task_sources_migration_keeps_rows_and_search() {
+        let mut c = Connection::open_in_memory().unwrap();
+        c.pragma_update(None, "foreign_keys", "ON").unwrap();
+        let m = Migrations::from_slice(MIGRATIONS);
+        m.to_version(&mut c, 2).unwrap();
+        c.execute_batch(
+            "INSERT INTO meetings (id, title, language, status, started_at, duration_ms, created_at, updated_at)
+               VALUES ('m', 't', 'om', 'ready', 1, 0, 1, 1);
+             INSERT INTO tasks (id, meeting_id, text, source_kind, match_key, created_at, updated_at)
+               VALUES ('t1', 'm', 'Gabaasa ba''e erguu', 'action_item', 'Gabaasa ba''e erguu', 1, 1);",
+        )
+        .unwrap();
+        m.to_latest(&mut c).unwrap();
+        // The old row is still found by search, and the new kinds are allowed.
+        let hit: String = c
+            .query_row(
+                "SELECT t.id FROM tasks_fts f JOIN tasks t ON t.rowid = f.rowid
+                 WHERE tasks_fts MATCH '\"ba''e\"'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hit, "t1");
+        c.execute(
+            "INSERT INTO tasks (id, meeting_id, text, source_kind, match_key, created_at, updated_at)
+             VALUES ('t2', 'm', 'x', 'summary', 'x', 2, 2)",
+            [],
+        )
+        .unwrap();
+        // Triggers were recreated: a new row is searchable, cascade still works.
+        let n: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM tasks_fts WHERE tasks_fts MATCH 'x'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+        c.execute("DELETE FROM meetings WHERE id = 'm'", [])
+            .unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
     }
 
     #[test]

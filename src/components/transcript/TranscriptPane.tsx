@@ -14,9 +14,17 @@ import {
 } from "lucide-react";
 import { type Ref, useEffect, useRef, useState } from "react";
 import { commands } from "@/bindings";
+import { SelectionToTask } from "@/components/tasks/SelectionToTask";
 import { Button } from "@/components/ui/button";
 import { call } from "@/lib/native";
-import { useDeleteMeeting, useMeeting, useRenameMeeting, useRetryQueue } from "@/lib/queries";
+import {
+  useDeleteMeeting,
+  useMeeting,
+  useMeetingTasks,
+  useRenameMeeting,
+  useRetryQueue,
+} from "@/lib/queries";
+import { deleteConfirmText } from "@/lib/tasks";
 import type { MeetingDetail, Segment } from "@/lib/types";
 import { cn, formatTimestamp } from "@/lib/utils";
 import { useRecording } from "@/stores/recording";
@@ -109,10 +117,11 @@ function MeetingTitle({ meeting }: { meeting: MeetingDetail }) {
 }
 
 // Two-step delete: the first click arms it, the second (within 4 s) deletes
-// the meeting and its audio from this computer (FR-HIS-04).
+// the meeting, its audio and its tasks from this computer (FR-HIS-04, FR-AI-08).
 function DeleteButton({ meeting }: { meeting: MeetingDetail }) {
   const del = useDeleteMeeting();
   const [armed, setArmed] = useState(false);
+  const { data: tasks } = useMeetingTasks(meeting.id, armed);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (!armed) return;
@@ -143,7 +152,7 @@ function DeleteButton({ meeting }: { meeting: MeetingDetail }) {
         title="Delete this meeting and its audio from this computer"
       >
         {del.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />}
-        {armed ? "Click again to delete" : "Delete"}
+        {armed ? deleteConfirmText(tasks?.length) : "Delete"}
       </Button>
     </>
   );
@@ -406,7 +415,13 @@ function SegmentList({ meeting }: { meeting: MeetingDetail }) {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-      <div className="mx-auto max-w-3xl space-y-3">
+      {/* Select any transcript text to add it as a task (FR-AI-08). */}
+      <SelectionToTask
+        meetingId={meeting.id}
+        sourceVersion={null}
+        kind="transcript"
+        className="mx-auto max-w-3xl space-y-3"
+      >
         {meeting.segments.map((s) => (
           <SegmentCard
             key={s.id}
@@ -419,7 +434,7 @@ function SegmentList({ meeting }: { meeting: MeetingDetail }) {
         {meeting.status === "processing" && (
           <div className="h-20 animate-pulse rounded-xl bg-card/60" />
         )}
-      </div>
+      </SelectionToTask>
     </div>
   );
 }
@@ -440,9 +455,11 @@ function SegmentCard({
     <button
       ref={ref}
       type="button"
-      onClick={onClick}
+      data-segment-ids={segment.id}
+      // A drag that selected text (to add it as a task) isn't a seek.
+      onClick={() => window.getSelection()?.isCollapsed !== false && onClick()}
       className={cn(
-        "block w-full rounded-xl border border-transparent bg-card px-5 py-4 text-left transition-colors hover:bg-card-hover",
+        "block w-full rounded-xl select-text border border-transparent bg-card px-5 py-4 text-left transition-colors hover:bg-card-hover",
         active && "border-accent/60 bg-card-hover",
       )}
     >

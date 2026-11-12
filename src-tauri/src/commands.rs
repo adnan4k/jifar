@@ -278,6 +278,80 @@ pub async fn notes_generate(
     Ok(saved.into())
 }
 
+// ---- Tasks (FR-AI-08) -------------------------------------------------------
+
+/// Tasks across meetings, open first, then newest. `query` matches task words.
+#[tauri::command]
+#[specta::specta]
+pub async fn tasks_list(
+    state: State<'_, AppState>,
+    filter: crate::dto::TaskFilterDto,
+    meeting_id: Option<String>,
+    query: Option<String>,
+) -> Result<Vec<crate::dto::TaskDto>, AppError> {
+    let tasks = state.tasks.clone();
+    blocking(move || {
+        Ok(tasks
+            .list(filter.into(), meeting_id.as_deref(), query.as_deref())?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    })
+    .await
+}
+
+/// Adds notes items (or typed tasks). Items already added return the
+/// existing task.
+#[tauri::command]
+#[specta::specta]
+pub async fn tasks_add(
+    state: State<'_, AppState>,
+    items: Vec<crate::dto::NewTaskDto>,
+) -> Result<Vec<crate::dto::TaskDto>, AppError> {
+    let tasks = state.tasks.clone();
+    blocking(move || {
+        Ok(tasks
+            .add(items.into_iter().map(Into::into).collect())?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn task_update(
+    state: State<'_, AppState>,
+    task_id: String,
+    patch: crate::dto::TaskPatchDto,
+) -> Result<crate::dto::TaskDto, AppError> {
+    let tasks = state.tasks.clone();
+    blocking(move || Ok(tasks.update(&task_id, patch.into())?.into())).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn task_delete(state: State<'_, AppState>, task_id: String) -> Result<(), AppError> {
+    let tasks = state.tasks.clone();
+    blocking(move || Ok(tasks.delete(&task_id)?)).await
+}
+
+/// Open and done totals, for the sidebar badge.
+#[tauri::command]
+#[specta::specta]
+pub async fn tasks_counts(state: State<'_, AppState>) -> Result<crate::dto::TaskCounts, AppError> {
+    let tasks = state.tasks.clone();
+    blocking(move || {
+        let (open, done) = tasks.counts()?;
+        Ok(crate::dto::TaskCounts {
+            open: u32::try_from(open).unwrap_or(u32::MAX),
+            done: u32::try_from(done).unwrap_or(u32::MAX),
+        })
+    })
+    .await
+}
+
 pub(crate) fn notify(app: &AppHandle, meeting: &crate::dto::Meeting) {
     let _ = MeetingStatusChanged {
         meeting_id: meeting.id.clone(),

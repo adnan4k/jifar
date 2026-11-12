@@ -128,6 +128,7 @@ Goal: turn transcripts into useful notes, and make history searchable and export
 - [ ] Re-transcribe a whole meeting. **FR-TRN-07**
 - [ ] Search across titles, transcripts and notes, with snippets. < 300 ms over 500 meetings, checked with a generated benchmark DB. **FR-HIS-02, NFR-03**
 - [ ] Export Markdown and plain text (P0), plus SRT/VTT and mixed `.opus` (P1). Exports preserve Qubee apostrophes. **FR-HIS-05, FR-HIS-06**
+- [ ] Tasks from notes: add action items, decisions and key points to a local checklist; Tasks view across meetings with jump-to-source; tasks in meeting search; delete confirmation counts them (spec D12). **FR-AI-08**
 - [ ] "Local only" mode that disables all providers, while recording and history keep working. **FR-PRV-05**
 - [ ] Finish AEC integration if the OQ-4 spike says so. **FR-REC-10**
 - [ ] Externalize UI strings. English complete, Afaan Oromo translation started. **NFR-07**
@@ -159,7 +160,7 @@ whisper.cpp / ONNX ASR and llama.cpp evaluated with the same `jifar-eval` harnes
 | M1 | FR-REC-02, 03, 04, 05, 07, 08, 09 · NFR-02 · (FR-REC-10 spike) |
 | M2 | FR-TRN-01, 02 · FR-PRV-04 · spec §9 baseline |
 | M3 | FR-REC-01, 06 · FR-TRN-04, 06 · FR-HIS-01, 03, 04 · FR-PRV-01, 03 · NFR-03, 04, 05 |
-| M4 | FR-TRN-05, 07 · FR-AI-01, 02, 03, 04, 05 · FR-HIS-02, 05, 06 · FR-PRV-05 · FR-REC-10 · NFR-07 (start) |
+| M4 | FR-TRN-05, 07 · FR-AI-01, 02, 03, 04, 05, 08 · FR-HIS-02, 05, 06 · FR-PRV-05 · FR-REC-10 · NFR-07 (start) |
 | M5 | NFR-01 · NFR-07 (finish) · spec §10 |
 | Deferred | FR-TRN-03 (near-live transcription, per D1) · FR-REC-11, FR-TRN-08, FR-AI-06, FR-HIS-07 (P2) |
 
@@ -222,3 +223,4 @@ Record plan-level decisions here (P1 cuts, re-sequencing, go/no-go outcomes). Pr
 | 2026-11-11 | M3's recording slice (core service, commands/events, tray, UI wiring, playback) done before `jifar-store`. | Product owner wants to test recording through the real UI. Same work, different order. |
 | 2026-11-11 | Audio reaches the WebView only through the read-only `jifar-audio://` scheme. | Product owner asked for playback now; scheme keeps the scope explicit (PLAN §6.2). |
 | 2026-11-11 | ONNX Runtime is loaded dynamically (`ort` `load-dynamic`), not downloaded at build time. | ort's build-time download pulls `ureq` into jifar-audio, which `check-deps.sh` forbids. Dynamic loading keeps the guard strict, and a missing library can only affect chunking. M5 packaging must bundle `libonnxruntime.so` (R7). |
+| 2026-11-12 | **Tasks from notes (FR-AI-08) added to M4** as a narrow local checklist (spec D12, §4 narrowed). | Product owner request. Kept to follow-ups from your own meetings; no projects, reminders, sync or external tools. |

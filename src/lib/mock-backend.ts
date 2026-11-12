@@ -8,12 +8,17 @@
 //
 // The Afaan Oromo text below is illustrative sample data only.
 
+import { matchKey } from "./tasks";
 import type {
   AudioDevice,
   MeetingDetail,
   MeetingNotes,
   MeetingSummary,
+  NewTask,
   Segment,
+  Task,
+  TaskFilter,
+  TaskPatch,
   Track,
 } from "./types";
 
@@ -135,6 +140,35 @@ function seed(): MeetingDetail[] {
 }
 
 const meetings: MeetingDetail[] = seed();
+
+// Tasks (FR-AI-08), seeded from the newest meeting's action items.
+type StoredTask = Omit<Task, "meetingTitle" | "sourceStartMs">;
+const tasks: StoredTask[] = (() => {
+  const m = meetings[0];
+  if (!m?.notes) return [];
+  return m.notes.actionItems.map((a, i) => ({
+    id: crypto.randomUUID(),
+    meetingId: m.id,
+    text: a.text,
+    owner: a.owner ?? null,
+    due: a.due ?? null,
+    done: i === 0,
+    doneAt: i === 0 ? Date.now() : null,
+    sourceKind: "action_item",
+    sourceVersion: null,
+    segmentIds: a.segmentIds,
+    matchKey: matchKey(a.text),
+    createdAt: Date.now() - HOUR,
+  }));
+})();
+
+function viewTask(t: StoredTask): Task {
+  const m = meetings.find((x) => x.id === t.meetingId);
+  const seg = m?.segments.find((s) => s.id === t.segmentIds[0]);
+  return { ...t, meetingTitle: m?.title ?? null, sourceStartMs: seg?.startMs ?? null };
+}
+
+const clean = (s: string | null | undefined) => s?.trim() || null;
 const listeners = new Set<() => void>();
 const emit = () => {
   for (const l of listeners) l();
@@ -198,7 +232,8 @@ export const backend = {
           !q ||
           m.title.toLocaleLowerCase().includes(q) ||
           m.segments.some((s) => s.text.toLocaleLowerCase().includes(q)) ||
-          (m.notes?.summary.toLocaleLowerCase().includes(q) ?? false),
+          (m.notes?.summary.toLocaleLowerCase().includes(q) ?? false) ||
+          tasks.some((t) => t.meetingId === m.id && t.text.toLocaleLowerCase().includes(q)),
       )
       .sort((a, b) => b.startedAt - a.startedAt)
       .map(toSummary);
@@ -249,8 +284,86 @@ export const backend = {
   async meetingDelete(id: string): Promise<null> {
     const i = meetings.findIndex((m) => m.id === id);
     if (i >= 0) meetings.splice(i, 1);
+    for (let j = tasks.length - 1; j >= 0; j--) if (tasks[j]?.meetingId === id) tasks.splice(j, 1);
     emit();
     return null;
+  },
+
+  async tasksList(filter: TaskFilter, meetingId: string | null, query: string): Promise<Task[]> {
+    const q = query.trim().toLocaleLowerCase();
+    return tasks
+      .filter(
+        (t) =>
+          (filter === "all" || t.done === (filter === "done")) &&
+          (meetingId === null || t.meetingId === meetingId) &&
+          (!q || t.text.toLocaleLowerCase().includes(q)),
+      )
+      .sort((a, b) => Number(a.done) - Number(b.done) || b.createdAt - a.createdAt)
+      .map(viewTask);
+  },
+
+  async tasksAdd(items: NewTask[]): Promise<Task[]> {
+    if (items.some((i) => !i.text.trim())) throw new Error("invalid_input: a task needs some text");
+    const now = Date.now();
+    const out = items.map((i) => {
+      const key = matchKey(i.text);
+      const existing = tasks.find(
+        (t) =>
+          i.sourceKind !== "manual" &&
+          i.meetingId !== null &&
+          t.meetingId === i.meetingId &&
+          t.sourceKind === i.sourceKind &&
+          t.matchKey === key,
+      );
+      if (existing) return existing;
+      const t: StoredTask = {
+        id: crypto.randomUUID(),
+        meetingId: i.meetingId,
+        text: i.text.trim(),
+        owner: clean(i.owner),
+        due: clean(i.due),
+        done: false,
+        doneAt: null,
+        sourceKind: i.sourceKind,
+        sourceVersion: i.sourceVersion ?? null,
+        segmentIds: i.segmentIds,
+        matchKey: key,
+        createdAt: now,
+      };
+      tasks.push(t);
+      return t;
+    });
+    emit();
+    return out.map(viewTask);
+  },
+
+  async taskUpdate(id: string, patch: TaskPatch): Promise<Task> {
+    const t = tasks.find((x) => x.id === id);
+    if (!t) throw new Error(`task_not_found: ${id}`);
+    if (patch.text !== undefined) {
+      if (!patch.text.trim()) throw new Error("invalid_input: a task needs some text");
+      t.text = patch.text.trim();
+    }
+    if (patch.owner !== undefined) t.owner = clean(patch.owner);
+    if (patch.due !== undefined) t.due = clean(patch.due);
+    if (patch.done !== undefined) {
+      t.doneAt = patch.done ? (t.doneAt ?? Date.now()) : null;
+      t.done = patch.done;
+    }
+    emit();
+    return viewTask(t);
+  },
+
+  async taskDelete(id: string): Promise<null> {
+    const i = tasks.findIndex((t) => t.id === id);
+    if (i >= 0) tasks.splice(i, 1);
+    emit();
+    return null;
+  },
+
+  async tasksCounts(): Promise<{ open: number; done: number }> {
+    const done = tasks.filter((t) => t.done).length;
+    return { open: tasks.length - done, done };
   },
 
   async queueRetry(id: string): Promise<void> {

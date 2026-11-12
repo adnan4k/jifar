@@ -30,6 +30,7 @@ pub struct AppState {
     pub recording: Arc<RecordingService>,
     pub library: Library,
     pub notes: jifar_core::notes::NotesService,
+    pub tasks: jifar_core::tasks::Tasks,
     pub keys: Arc<ProviderKeys>,
     settings: Mutex<Settings>,
 }
@@ -66,6 +67,11 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meeting_rename,
             commands::meeting_delete,
             commands::notes_generate,
+            commands::tasks_list,
+            commands::tasks_add,
+            commands::task_update,
+            commands::task_delete,
+            commands::tasks_counts,
         ])
         .events(collect_events![
             events::AudioLevels,
@@ -111,6 +117,7 @@ pub fn run() -> anyhow::Result<()> {
         .recover_interrupted()
         .context("recovering interrupted meetings")?;
     let library = Library::new(store.clone(), paths.clone());
+    let tasks = jifar_core::tasks::Tasks::new(store.clone());
     let recording = Arc::new(RecordingService::new(
         paths.clone(),
         Box::new(SystemAudio::default()),
@@ -129,6 +136,7 @@ pub fn run() -> anyhow::Result<()> {
                 ),
                 library.clone(),
             ),
+            tasks,
             keys: Arc::new(ProviderKeys::default()),
             settings: Mutex::new(settings),
         })
